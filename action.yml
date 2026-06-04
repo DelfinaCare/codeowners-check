@@ -1,0 +1,53 @@
+name: CODEOWNERS Check
+description: >-
+  Enforces CODEOWNERS approval on pull requests. Fails when required owners have
+  not approved all changed files.
+author: aebrahim
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  github-token:
+    description: >-
+      GitHub token used to read PR details, reviews, and file contents. Defaults
+      to the token provided by the Actions runner.
+    required: false
+    default: ${{ github.token }}
+  codeowners-path:
+    description: >-
+      Path to the CODEOWNERS file in the repository. The file is fetched from
+      the PR head SHA.
+    required: false
+    default: .github/CODEOWNERS
+  codeowners-contents:
+    description: >-
+      Raw CODEOWNERS file contents to use instead of fetching the file from the
+      repository. When provided, codeowners-path is ignored.
+    required: false
+    default: ''
+  ignore-filepaths:
+    description: >-
+      Comma- or newline-separated list of file paths or glob patterns where
+      CODEOWNERS rules should be ignored.
+    required: false
+    default: ''
+  ignore-authors:
+    description: >-
+      Comma- or newline-separated list of PR authors for which the CODEOWNERS
+      check should be skipped entirely.
+    required: false
+    default: ''
+  always-succeed-before-approval:
+    description: >-
+      When true, the action exits successfully if the PR has no approvals yet,
+      even if the CODEOWNERS check would otherwise have failed. This avoids
+      spurious CI failures while a PR is still awaiting its first review. Most
+      workflows already enforce at least one approval via branch protection,
+      making this safe to leave enabled.
+    required: false
+    default: 'true'
+
+runs:
+  using: node24
+  main: dist/index.js
