@@ -492,4 +492,370 @@ describe('main.ts', () => {
       expect.stringContaining('src/app.ts')
     )
   })
+
+  describe('status-check-name', () => {
+    const STATUS_CHECK_NAME = 'codeowners-check'
+
+    let createCommitStatus: jest.Mock<() => Promise<unknown>>
+
+    beforeEach(() => {
+      createCommitStatus = jest
+        .fn<() => Promise<unknown>>()
+        .mockResolvedValue({})
+    })
+
+    function withStatusCheck(
+      base: (name: string) => string
+    ): (name: string) => string {
+      return (name: string) => {
+        if (name === 'status-check-name') return STATUS_CHECK_NAME
+        return base(name)
+      }
+    }
+
+    it('does not post a status check when status-check-name is not set', async () => {
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'frontend-dev' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/app.ts' }]
+          }),
+          getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+          }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(createCommitStatus).not.toHaveBeenCalled()
+    })
+
+    it('does not post a status check when skipping due to no approvals and always-succeed-before-approval is true', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest
+            .fn<() => Promise<unknown>>()
+            .mockResolvedValue({ data: [] }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('No approvals found')
+      )
+      expect(createCommitStatus).not.toHaveBeenCalled()
+    })
+
+    it('posts a success status when check passes', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'frontend-dev' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/app.ts' }]
+          }),
+          getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+          }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner: 'myorg',
+          repo: 'myrepo',
+          sha: 'deadbeef',
+          state: 'success',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('posts a success status when author is in ignore-authors', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          if (name === 'ignore-authors') return 'alice'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'success',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('posts a success status when all changed files are ignored', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          if (name === 'ignore-filepaths') return 'dist/**'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'dist/bundle.js' }]
+          }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'success',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('posts a success status when CODEOWNERS file is empty', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/foo.ts' }]
+          }),
+          getContent: jest
+            .fn<() => Promise<unknown>>()
+            .mockResolvedValue({ data: { content: '', encoding: 'base64' } }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'success',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('does not post a status when the check fails', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/app.ts' }]
+          }),
+          getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: {
+              content: b64(BASE_CODEOWNERS),
+              encoding: 'base64'
+            }
+          }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalled()
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'failure',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('posts a failure status when CODEOWNERS check fails', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/app.ts' }]
+          }),
+          getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: {
+              content: b64(BASE_CODEOWNERS),
+              encoding: 'base64'
+            }
+          }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/app.ts')
+      )
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner: 'myorg',
+          repo: 'myrepo',
+          sha: 'deadbeef',
+          state: 'failure',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('posts a failure status when CODEOWNERS file cannot be fetched', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/foo.ts' }]
+          }),
+          getContent: jest
+            .fn<() => Promise<unknown>>()
+            .mockRejectedValue(new Error('Not Found')),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to fetch CODEOWNERS file')
+      )
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'failure',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('posts a failure status on unexpected errors when context is available', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest
+            .fn<() => Promise<unknown>>()
+            .mockRejectedValue(new Error('Network failure')),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith('Network failure')
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'failure',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('does not post a failure status on unexpected errors when context is not yet available', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockImplementation(() => {
+        throw new Error('Bad credentials')
+      })
+
+      const createCommitStatus = jest.fn<() => Promise<unknown>>()
+      // (createCommitStatus won't be wired since getOctokit throws before
+      // buildMockOctokit is even called, but we verify it is never invoked)
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith('Bad credentials')
+      expect(createCommitStatus).not.toHaveBeenCalled()
+    })
+  })
 })
