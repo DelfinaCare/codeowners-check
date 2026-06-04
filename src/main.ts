@@ -48,7 +48,7 @@ async function setCommitStatus(
   state: 'success' | 'failure',
   description: string
 ): Promise<void> {
-  if (!statusCheckName.trim() || !octokit || !sha) return
+  if (!statusCheckName.trim() || !octokit) return
   await octokit.rest.repos.createCommitStatus({
     owner,
     repo,
@@ -67,7 +67,7 @@ async function setCommitStatus(
 export async function run(): Promise<void> {
   // Declared outside the try block so that the catch clause can still post a
   // failure commit status even when an unexpected error is thrown mid-run.
-  let octokit: ReturnType<typeof github.getOctokit> | undefined
+  let octokitForCatch: ReturnType<typeof github.getOctokit> | undefined
   let statusOwner = ''
   let statusRepo = ''
   let statusHeadSha = ''
@@ -85,7 +85,8 @@ export async function run(): Promise<void> {
     )
     statusCheckName = core.getInput('status-check-name')
 
-    octokit = github.getOctokit(token)
+    const octokit = github.getOctokit(token)
+    octokitForCatch = octokit
     const { context } = github
 
     if (!context.payload.pull_request) {
@@ -255,8 +256,8 @@ export async function run(): Promise<void> {
       }
       try {
         const logins = new Set<string>()
-        for await (const { data: members } of octokit!.paginate.iterator(
-          octokit!.rest.teams.listMembersInOrg,
+        for await (const { data: members } of octokit.paginate.iterator(
+          octokit.rest.teams.listMembersInOrg,
           { org: teamOrg, team_slug: teamSlug, per_page: 100 }
         )) {
           for (const m of members) {
@@ -351,7 +352,7 @@ export async function run(): Promise<void> {
   } catch (error: unknown) {
     core.setFailed(errorToString(error))
     await setCommitStatus(
-      octokit,
+      octokitForCatch,
       statusOwner,
       statusRepo,
       statusHeadSha,
