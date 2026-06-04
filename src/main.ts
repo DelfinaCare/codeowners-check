@@ -35,23 +35,25 @@ async function isIgnored(
 }
 
 /**
- * Posts a "success" commit status to the PR head SHA when a status check name
- * has been configured.
+ * Posts a commit status to the PR head SHA when a status check name has been
+ * configured. No-ops when statusCheckName is empty/whitespace or when octokit
+ * is not yet available (early failure before the client was created).
  */
-async function setSuccessStatus(
-  octokit: ReturnType<typeof github.getOctokit>,
+async function setCommitStatus(
+  octokit: ReturnType<typeof github.getOctokit> | undefined,
   owner: string,
   repo: string,
   sha: string,
   statusCheckName: string,
+  state: 'success' | 'failure',
   description: string
 ): Promise<void> {
-  if (!statusCheckName.trim()) return
+  if (!statusCheckName.trim() || !octokit || !sha) return
   await octokit.rest.repos.createCommitStatus({
     owner,
     repo,
     sha,
-    state: 'success',
+    state,
     context: statusCheckName,
     description
   })
@@ -63,6 +65,14 @@ async function setSuccessStatus(
  * @returns Resolves when the action is complete.
  */
 export async function run(): Promise<void> {
+  // Declared outside the try block so that the catch clause can still post a
+  // failure commit status even when an unexpected error is thrown mid-run.
+  let octokit: ReturnType<typeof github.getOctokit> | undefined
+  let statusOwner = ''
+  let statusRepo = ''
+  let statusHeadSha = ''
+  let statusCheckName = ''
+
   try {
     const token = core.getInput('github-token', { required: true })
     const codeownersPath =
@@ -73,9 +83,9 @@ export async function run(): Promise<void> {
     const alwaysSucceedBeforeApproval = core.getBooleanInput(
       'always-succeed-before-approval'
     )
-    const statusCheckName = core.getInput('status-check-name')
+    statusCheckName = core.getInput('status-check-name')
 
-    const octokit = github.getOctokit(token)
+    octokit = github.getOctokit(token)
     const { context } = github
 
     if (!context.payload.pull_request) {
@@ -88,6 +98,12 @@ export async function run(): Promise<void> {
     const repo = context.repo.repo
     const prAuthor: string = context.payload.pull_request.user.login
     const headSha: string = context.payload.pull_request.head.sha
+
+    // Populate the status context variables as soon as we have them so the
+    // catch clause can use them if an error is thrown later.
+    statusOwner = owner
+    statusRepo = repo
+    statusHeadSha = headSha
 
     core.info(`PR #${prNumber} — author: ${prAuthor}, head SHA: ${headSha}`)
 
@@ -127,12 +143,13 @@ export async function run(): Promise<void> {
       core.info(
         `Author "${prAuthor}" is in ignore-authors — CODEOWNERS check passes.`
       )
-      await setSuccessStatus(
+      await setCommitStatus(
         octokit,
         owner,
         repo,
         headSha,
         statusCheckName,
+        'success',
         'CODEOWNERS check passed (author in ignore-authors)'
       )
       return
@@ -161,12 +178,13 @@ export async function run(): Promise<void> {
       core.info(
         'All changed files are in ignore-filepaths — CODEOWNERS check passes.'
       )
-      await setSuccessStatus(
+      await setCommitStatus(
         octokit,
         owner,
         repo,
         headSha,
         statusCheckName,
+        'success',
         'CODEOWNERS check passed (all files ignored)'
       )
       return
@@ -190,20 +208,29 @@ export async function run(): Promise<void> {
         const data = response.data as { content?: string; encoding?: string }
         if (!data.content) {
           core.info('CODEOWNERS file is empty — CODEOWNERS check passes.')
-          await setSuccessStatus(
+          await setCommitStatus(
             octokit,
             owner,
             repo,
             headSha,
             statusCheckName,
+            'success',
             'CODEOWNERS check passed (empty CODEOWNERS file)'
           )
           return
         }
         codeownersContent = Buffer.from(data.content, 'base64').toString('utf8')
       } catch (error: unknown) {
-        core.setFailed(
-          `Failed to fetch CODEOWNERS file at "${codeownersPath}" with error: ${errorToString(error)}`
+        const message = `Failed to fetch CODEOWNERS file at "${codeownersPath}" with error: ${errorToString(error)}`
+        core.setFailed(message)
+        await setCommitStatus(
+          octokit,
+          owner,
+          repo,
+          headSha,
+          statusCheckName,
+          'failure',
+          'Failed to fetch CODEOWNERS file'
         )
         return
       }
@@ -228,8 +255,8 @@ export async function run(): Promise<void> {
       }
       try {
         const logins = new Set<string>()
-        for await (const { data: members } of octokit.paginate.iterator(
-          octokit.rest.teams.listMembersInOrg,
+        for await (const { data: members } of octokit!.paginate.iterator(
+          octokit!.rest.teams.listMembersInOrg,
           { org: teamOrg, team_slug: teamSlug, per_page: 100 }
         )) {
           for (const m of members) {
@@ -300,18 +327,37 @@ export async function run(): Promise<void> {
       core.setFailed(
         `CODEOWNERS check failed. The following files need approval:\n${lines.join('\n')}`
       )
-    } else {
-      core.info('CODEOWNERS check passed.')
-      await setSuccessStatus(
+      await setCommitStatus(
         octokit,
         owner,
         repo,
         headSha,
         statusCheckName,
+        'failure',
+        'CODEOWNERS check failed'
+      )
+    } else {
+      core.info('CODEOWNERS check passed.')
+      await setCommitStatus(
+        octokit,
+        owner,
+        repo,
+        headSha,
+        statusCheckName,
+        'success',
         'CODEOWNERS check passed'
       )
     }
   } catch (error: unknown) {
     core.setFailed(errorToString(error))
+    await setCommitStatus(
+      octokit,
+      statusOwner,
+      statusRepo,
+      statusHeadSha,
+      statusCheckName,
+      'failure',
+      'CODEOWNERS check encountered an unexpected error'
+    )
   }
 }

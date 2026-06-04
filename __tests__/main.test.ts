@@ -713,6 +713,133 @@ describe('main.ts', () => {
       await run()
 
       expect(core.setFailed).toHaveBeenCalled()
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'failure',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('posts a failure status when CODEOWNERS check fails', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/app.ts' }]
+          }),
+          getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: {
+              content: b64(BASE_CODEOWNERS),
+              encoding: 'base64'
+            }
+          }),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/app.ts')
+      )
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner: 'myorg',
+          repo: 'myrepo',
+          sha: 'deadbeef',
+          state: 'failure',
+          context: STATUS_CHECK_NAME
+        })
+      )
+    })
+
+    it('posts a failure status when CODEOWNERS file cannot be fetched', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/foo.ts' }]
+          }),
+          getContent: jest
+            .fn<() => Promise<unknown>>()
+            .mockRejectedValue(new Error('Not Found')),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to fetch CODEOWNERS file')
+      )
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'failure', context: STATUS_CHECK_NAME })
+      )
+    })
+
+    it('posts a failure status on unexpected errors when context is available', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest
+            .fn<() => Promise<unknown>>()
+            .mockRejectedValue(new Error('Network failure')),
+          createCommitStatus
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith('Network failure')
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'failure', context: STATUS_CHECK_NAME })
+      )
+    })
+
+    it('does not post a failure status on unexpected errors when context is not yet available', async () => {
+      core.getInput.mockImplementation(
+        withStatusCheck((name) => {
+          if (name === 'github-token') return 'fake-token'
+          return ''
+        })
+      )
+
+      gh.getOctokit.mockImplementation(() => {
+        throw new Error('Bad credentials')
+      })
+
+      const createCommitStatus = jest.fn<() => Promise<unknown>>()
+      // (createCommitStatus won't be wired since getOctokit throws before
+      // buildMockOctokit is even called, but we verify it is never invoked)
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith('Bad credentials')
       expect(createCommitStatus).not.toHaveBeenCalled()
     })
   })
