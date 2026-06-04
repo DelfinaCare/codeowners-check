@@ -620,7 +620,10 @@ describe('main.ts', () => {
 
       expect(core.setFailed).not.toHaveBeenCalled()
       expect(createCommitStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ state: 'success', context: STATUS_CHECK_NAME })
+        expect.objectContaining({
+          state: 'success',
+          context: STATUS_CHECK_NAME
+        })
       )
     })
 
@@ -649,7 +652,10 @@ describe('main.ts', () => {
 
       expect(core.setFailed).not.toHaveBeenCalled()
       expect(createCommitStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ state: 'success', context: STATUS_CHECK_NAME })
+        expect.objectContaining({
+          state: 'success',
+          context: STATUS_CHECK_NAME
+        })
       )
     })
 
@@ -680,7 +686,10 @@ describe('main.ts', () => {
 
       expect(core.setFailed).not.toHaveBeenCalled()
       expect(createCommitStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ state: 'success', context: STATUS_CHECK_NAME })
+        expect.objectContaining({
+          state: 'success',
+          context: STATUS_CHECK_NAME
+        })
       )
     })
 
@@ -792,7 +801,10 @@ describe('main.ts', () => {
         expect.stringContaining('Failed to fetch CODEOWNERS file')
       )
       expect(createCommitStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ state: 'failure', context: STATUS_CHECK_NAME })
+        expect.objectContaining({
+          state: 'failure',
+          context: STATUS_CHECK_NAME
+        })
       )
     })
 
@@ -817,7 +829,10 @@ describe('main.ts', () => {
 
       expect(core.setFailed).toHaveBeenCalledWith('Network failure')
       expect(createCommitStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ state: 'failure', context: STATUS_CHECK_NAME })
+        expect.objectContaining({
+          state: 'failure',
+          context: STATUS_CHECK_NAME
+        })
       )
     })
 

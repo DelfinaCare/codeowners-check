@@ -36032,11 +36032,35 @@ async function isIgnored(filePath, ignorePatterns) {
     return ignorePatterns.some((pat) => minimatch(filePath, pat, { dot: true, matchBase: true }));
 }
 /**
+ * Posts a commit status to the PR head SHA when a status check name has been
+ * configured. No-ops when statusCheckName is empty/whitespace or when octokit
+ * is not yet available (early failure before the client was created).
+ */
+async function setCommitStatus(octokit, owner, repo, sha, statusCheckName, state, description) {
+    if (!statusCheckName.trim() || !octokit)
+        return;
+    await octokit.rest.repos.createCommitStatus({
+        owner,
+        repo,
+        sha,
+        state,
+        context: statusCheckName,
+        description
+    });
+}
+/**
  * The main function for the action.
  *
  * @returns Resolves when the action is complete.
  */
 async function run() {
+    // Declared outside the try block so that the catch clause can still post a
+    // failure commit status even when an unexpected error is thrown mid-run.
+    let octokitForCatch;
+    let statusOwner = '';
+    let statusRepo = '';
+    let statusHeadSha = '';
+    let statusCheckName = '';
     try {
         const token = getInput('github-token', { required: true });
         const codeownersPath = getInput('codeowners-path') || '.github/CODEOWNERS';
@@ -36044,7 +36068,9 @@ async function run() {
         const ignoreFilepaths = splitInput(getInput('ignore-filepaths'));
         const ignoreAuthors = splitInput(getInput('ignore-authors'));
         const alwaysSucceedBeforeApproval = getBooleanInput('always-succeed-before-approval');
+        statusCheckName = getInput('status-check-name');
         const octokit = getOctokit(token);
+        octokitForCatch = octokit;
         const { context } = github;
         if (!context.payload.pull_request) {
             info('Not a pull request event — skipping CODEOWNERS check.');
@@ -36055,6 +36081,11 @@ async function run() {
         const repo = context.repo.repo;
         const prAuthor = context.payload.pull_request.user.login;
         const headSha = context.payload.pull_request.head.sha;
+        // Populate the status context variables as soon as we have them so the
+        // catch clause can use them if an error is thrown later.
+        statusOwner = owner;
+        statusRepo = repo;
+        statusHeadSha = headSha;
         info(`PR #${prNumber} — author: ${prAuthor}, head SHA: ${headSha}`);
         // 1. Read current PR approvals — exit success if none exist
         // Build set of users who have an APPROVED review (most-recent per user)
@@ -36079,7 +36110,8 @@ async function run() {
         info(`Approvers: ${[...approvers].join(', ')}`);
         // 2. Exit success if the PR author is in ignore-authors
         if (ignoreAuthors.includes(prAuthor)) {
-            info(`Author "${prAuthor}" is in ignore-authors — skipping check.`);
+            info(`Author "${prAuthor}" is in ignore-authors — CODEOWNERS check passes.`);
+            await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (author in ignore-authors)');
             return;
         }
         // 3. Read changed files; exit success if all are in ignore-filepaths
@@ -36097,7 +36129,8 @@ async function run() {
             }
         }
         if (relevantFiles.length === 0) {
-            info('All changed files are in ignore-filepaths — skipping check.');
+            info('All changed files are in ignore-filepaths — CODEOWNERS check passes.');
+            await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (all files ignored)');
             return;
         }
         // 4. Read CODEOWNERS — use provided contents or fetch from the PR head SHA
@@ -36116,13 +36149,16 @@ async function run() {
                 });
                 const data = response.data;
                 if (!data.content) {
-                    info('CODEOWNERS file is empty — skipping check.');
+                    info('CODEOWNERS file is empty — CODEOWNERS check passes.');
+                    await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (empty CODEOWNERS file)');
                     return;
                 }
                 codeownersContent = Buffer.from(data.content, 'base64').toString('utf8');
             }
             catch (error) {
-                setFailed(`Failed to fetch CODEOWNERS file at "${codeownersPath}" with error: ${errorToString(error)}`);
+                const message = `Failed to fetch CODEOWNERS file at "${codeownersPath}" with error: ${errorToString(error)}`;
+                setFailed(message);
+                await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'failure', 'Failed to fetch CODEOWNERS file');
                 return;
             }
         }
@@ -36197,13 +36233,16 @@ async function run() {
         if (failures.length > 0) {
             const lines = failures.map(({ file, requiredOwners }) => `  ${file}: requires approval from ${requiredOwners.join(' or ')}`);
             setFailed(`CODEOWNERS check failed. The following files need approval:\n${lines.join('\n')}`);
+            await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'failure', 'CODEOWNERS check failed');
         }
         else {
             info('CODEOWNERS check passed.');
+            await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed');
         }
     }
     catch (error) {
         setFailed(errorToString(error));
+        await setCommitStatus(octokitForCatch, statusOwner, statusRepo, statusHeadSha, statusCheckName, 'failure', 'CODEOWNERS check encountered an unexpected error');
     }
 }
 
