@@ -29,6 +29,7 @@ export function buildMockOctokit(overrides?: {
   listFiles?: jest.Mock
   getContent?: jest.Mock
   listMembersInOrg?: jest.Mock
+  createCommitStatus?: jest.Mock
 }): Octokit {
   const restMocks = {
     pulls: {
@@ -42,7 +43,10 @@ export function buildMockOctokit(overrides?: {
     repos: {
       getContent:
         overrides?.getContent ??
-        jest.fn<() => Promise<unknown>>().mockResolvedValue({ data: {} })
+        jest.fn<() => Promise<unknown>>().mockResolvedValue({ data: {} }),
+      createCommitStatus:
+        overrides?.createCommitStatus ??
+        jest.fn<() => Promise<unknown>>().mockResolvedValue({})
     },
     teams: {
       listMembersInOrg:

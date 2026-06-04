@@ -35,6 +35,29 @@ async function isIgnored(
 }
 
 /**
+ * Posts a "success" commit status to the PR head SHA when a status check name
+ * has been configured.
+ */
+async function setSuccessStatus(
+  octokit: ReturnType<typeof github.getOctokit>,
+  owner: string,
+  repo: string,
+  sha: string,
+  statusCheckName: string,
+  description: string
+): Promise<void> {
+  if (!statusCheckName) return
+  await octokit.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha,
+    state: 'success',
+    context: statusCheckName,
+    description
+  })
+}
+
+/**
  * The main function for the action.
  *
  * @returns Resolves when the action is complete.
@@ -50,6 +73,7 @@ export async function run(): Promise<void> {
     const alwaysSucceedBeforeApproval = core.getBooleanInput(
       'always-succeed-before-approval'
     )
+    const statusCheckName = core.getInput('status-check-name')
 
     const octokit = github.getOctokit(token)
     const { context } = github
@@ -100,7 +124,17 @@ export async function run(): Promise<void> {
 
     // 2. Exit success if the PR author is in ignore-authors
     if (ignoreAuthors.includes(prAuthor)) {
-      core.info(`Author "${prAuthor}" is in ignore-authors — skipping check.`)
+      core.info(
+        `Author "${prAuthor}" is in ignore-authors — CODEOWNERS check passes.`
+      )
+      await setSuccessStatus(
+        octokit,
+        owner,
+        repo,
+        headSha,
+        statusCheckName,
+        'CODEOWNERS check passed (author in ignore-authors)'
+      )
       return
     }
 
@@ -124,7 +158,17 @@ export async function run(): Promise<void> {
     }
 
     if (relevantFiles.length === 0) {
-      core.info('All changed files are in ignore-filepaths — skipping check.')
+      core.info(
+        'All changed files are in ignore-filepaths — CODEOWNERS check passes.'
+      )
+      await setSuccessStatus(
+        octokit,
+        owner,
+        repo,
+        headSha,
+        statusCheckName,
+        'CODEOWNERS check passed (all files ignored)'
+      )
       return
     }
 
@@ -145,7 +189,15 @@ export async function run(): Promise<void> {
         })
         const data = response.data as { content?: string; encoding?: string }
         if (!data.content) {
-          core.info('CODEOWNERS file is empty — skipping check.')
+          core.info('CODEOWNERS file is empty — CODEOWNERS check passes.')
+          await setSuccessStatus(
+            octokit,
+            owner,
+            repo,
+            headSha,
+            statusCheckName,
+            'CODEOWNERS check passed (empty CODEOWNERS file)'
+          )
           return
         }
         codeownersContent = Buffer.from(data.content, 'base64').toString('utf8')
@@ -250,6 +302,14 @@ export async function run(): Promise<void> {
       )
     } else {
       core.info('CODEOWNERS check passed.')
+      await setSuccessStatus(
+        octokit,
+        owner,
+        repo,
+        headSha,
+        statusCheckName,
+        'CODEOWNERS check passed'
+      )
     }
   } catch (error: unknown) {
     core.setFailed(errorToString(error))
