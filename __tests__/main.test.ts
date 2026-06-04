@@ -496,6 +496,14 @@ describe('main.ts', () => {
   describe('status-check-name', () => {
     const STATUS_CHECK_NAME = 'codeowners-check'
 
+    let createCommitStatus: jest.Mock<() => Promise<unknown>>
+
+    beforeEach(() => {
+      createCommitStatus = jest
+        .fn<() => Promise<unknown>>()
+        .mockResolvedValue({})
+    })
+
     function withStatusCheck(
       base: (name: string) => string
     ): (name: string) => string {
@@ -506,8 +514,6 @@ describe('main.ts', () => {
     }
 
     it('does not post a status check when status-check-name is not set', async () => {
-      const createCommitStatus = jest.fn<() => Promise<unknown>>()
-
       gh.getOctokit.mockReturnValue(
         gh.buildMockOctokit({
           listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
@@ -537,8 +543,6 @@ describe('main.ts', () => {
         })
       )
 
-      const createCommitStatus = jest.fn<() => Promise<unknown>>()
-
       gh.getOctokit.mockReturnValue(
         gh.buildMockOctokit({
           listReviews: jest
@@ -564,10 +568,6 @@ describe('main.ts', () => {
           return ''
         })
       )
-
-      const createCommitStatus = jest
-        .fn<() => Promise<unknown>>()
-        .mockResolvedValue({})
 
       gh.getOctokit.mockReturnValue(
         gh.buildMockOctokit({
@@ -607,10 +607,6 @@ describe('main.ts', () => {
         })
       )
 
-      const createCommitStatus = jest
-        .fn<() => Promise<unknown>>()
-        .mockResolvedValue({})
-
       gh.getOctokit.mockReturnValue(
         gh.buildMockOctokit({
           listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
@@ -636,10 +632,6 @@ describe('main.ts', () => {
           return ''
         })
       )
-
-      const createCommitStatus = jest
-        .fn<() => Promise<unknown>>()
-        .mockResolvedValue({})
 
       gh.getOctokit.mockReturnValue(
         gh.buildMockOctokit({
@@ -668,10 +660,6 @@ describe('main.ts', () => {
           return ''
         })
       )
-
-      const createCommitStatus = jest
-        .fn<() => Promise<unknown>>()
-        .mockResolvedValue({})
 
       gh.getOctokit.mockReturnValue(
         gh.buildMockOctokit({
@@ -703,8 +691,6 @@ describe('main.ts', () => {
           return ''
         })
       )
-
-      const createCommitStatus = jest.fn<() => Promise<unknown>>()
 
       gh.getOctokit.mockReturnValue(
         gh.buildMockOctokit({

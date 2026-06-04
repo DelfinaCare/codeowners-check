@@ -46,7 +46,7 @@ async function setSuccessStatus(
   statusCheckName: string,
   description: string
 ): Promise<void> {
-  if (!statusCheckName) return
+  if (!statusCheckName.trim()) return
   await octokit.rest.repos.createCommitStatus({
     owner,
     repo,
