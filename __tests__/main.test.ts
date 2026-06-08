@@ -439,14 +439,15 @@ describe('main.ts', () => {
   })
 
   it('preserves APPROVED state when a later COMMENTED review would otherwise clobber it', async () => {
-    // approver first submits APPROVED, then adds a comment (COMMENTED).
+    // GitHub returns reviews in reverse-chronological order (newest first).
+    // approver first submitted APPROVED, then added a comment (COMMENTED).
     // The COMMENTED review must not overwrite the APPROVED state in the map.
     gh.getOctokit.mockReturnValue(
       gh.buildMockOctokit({
         listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
           data: [
-            { user: { login: 'frontend-dev' }, state: 'APPROVED' },
-            { user: { login: 'frontend-dev' }, state: 'COMMENTED' }
+            { user: { login: 'frontend-dev' }, state: 'COMMENTED' },
+            { user: { login: 'frontend-dev' }, state: 'APPROVED' }
           ]
         }),
         listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
