@@ -109,14 +109,20 @@ export async function run(): Promise<void> {
     core.info(`PR #${prNumber} — author: ${prAuthor}, head SHA: ${headSha}`)
 
     // 1. Read current PR approvals — exit success if none exist
-    // Build set of users who have an APPROVED review (most-recent per user)
+    // Build map of the latest meaningful review state per user, considering only
+    // APPROVED and CHANGES_REQUESTED. States like COMMENTED or DISMISSED are
+    // ignored so they cannot clobber a previously recorded APPROVED or
+    // CHANGES_REQUESTED review.
     const latestReviewByUser = new Map<string, string>()
     for await (const { data: reviews } of octokit.paginate.iterator(
       octokit.rest.pulls.listReviews,
       { owner, repo, pull_number: prNumber, per_page: 100 }
     )) {
       for (const review of reviews) {
-        if (review.user?.login) {
+        if (
+          review.user?.login &&
+          (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED')
+        ) {
           latestReviewByUser.set(review.user.login, review.state)
         }
       }
@@ -127,13 +133,7 @@ export async function run(): Promise<void> {
         .map(([login]) => login)
     )
 
-    const changesRequestedBy = new Set<string>(
-      [...latestReviewByUser.entries()]
-        .filter(([, state]) => state === 'CHANGES_REQUESTED')
-        .map(([login]) => login)
-    )
-
-    if (approvers.size === 0 && changesRequestedBy.size === 0) {
+    if (approvers.size === 0) {
       if (alwaysSucceedBeforeApproval) {
         core.info('No approvals found — skipping CODEOWNERS check.')
         return
@@ -144,9 +144,6 @@ export async function run(): Promise<void> {
     }
 
     core.info(`Approvers: ${[...approvers].join(', ')}`)
-    if (changesRequestedBy.size > 0) {
-      core.info(`Changes requested by: ${[...changesRequestedBy].join(', ')}`)
-    }
 
     // 2. Exit success if the PR author is in ignore-authors
     if (ignoreAuthors.includes(prAuthor)) {
@@ -292,58 +289,38 @@ export async function run(): Promise<void> {
         continue
       }
 
-      // At least one required owner must be a participant AND no required owner
-      // may have an outstanding CHANGES_REQUESTED review.
-      // We must check every owner entry (no early break on satisfied) because a
-      // later entry in the list might have CHANGES_REQUESTED, which acts as a
-      // hard block even when an earlier entry already satisfied the requirement.
+      // At least one required owner must be a participant
       let satisfied = false
-      let blockedByChangesRequested = false
-      const changesRequestedArr = [...changesRequestedBy]
-      const participantsArr = [...participants]
       for (const ownerEntry of owners) {
         const stripped = ownerEntry.startsWith('@')
           ? ownerEntry.slice(1)
           : ownerEntry
         if (stripped.includes('/')) {
-          // Team entry: org/team-slug
+          // Team entry: org/team-slug — check if any participant is a team member
           const slashIndex = stripped.indexOf('/')
           const teamOrg = stripped.slice(0, slashIndex)
           const teamSlug = stripped.slice(slashIndex + 1)
           const teamLogins = await getTeamMembers(teamOrg, teamSlug)
-          if (teamLogins) {
-            const blocker = changesRequestedArr.find((u) => teamLogins.has(u))
-            if (blocker) {
-              core.debug(
-                `File "${file}" blocked by CHANGES_REQUESTED from ${blocker} in "${teamOrg}/${teamSlug}".`
-              )
-              blockedByChangesRequested = true
-              break
-            } else {
-              const member = participantsArr.find((p) => teamLogins.has(p))
-              if (member) {
-                core.debug(
-                  `File "${file}" approved by owner ${member} in "${teamOrg}/${teamSlug}".`
-                )
-                satisfied = true
-              }
-            }
+          if (teamLogins && [...participants].some((p) => teamLogins.has(p))) {
+            const member =
+              [...participants].find((p) => teamLogins.has(p)) ??
+              'unknown member'
+            core.debug(
+              `File "${file}" approved by owner ${member} in "${teamOrg}/${teamSlug}".`
+            )
+            satisfied = true
+            break
           }
         } else {
-          if (changesRequestedBy.has(stripped)) {
-            core.debug(
-              `File "${file}" blocked by CHANGES_REQUESTED from "${ownerEntry}".`
-            )
-            blockedByChangesRequested = true
-            break
-          } else if (participants.has(stripped)) {
+          if (participants.has(stripped)) {
             core.debug(`File "${file}" approved by owner "${ownerEntry}".`)
             satisfied = true
+            break
           }
         }
       }
 
-      if (!satisfied || blockedByChangesRequested) {
+      if (!satisfied) {
         failures.push({ file, requiredOwners: owners })
       }
     }
