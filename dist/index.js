@@ -36088,11 +36088,15 @@ async function run() {
         statusHeadSha = headSha;
         info(`PR #${prNumber} — author: ${prAuthor}, head SHA: ${headSha}`);
         // 1. Read current PR approvals — exit success if none exist
-        // Build set of users who have an APPROVED review (most-recent per user)
+        // Build map of the latest meaningful review state per user, considering only
+        // APPROVED and CHANGES_REQUESTED. States like COMMENTED or DISMISSED are
+        // ignored so they cannot clobber a previously recorded APPROVED or
+        // CHANGES_REQUESTED review.
         const latestReviewByUser = new Map();
         for await (const { data: reviews } of octokit.paginate.iterator(octokit.rest.pulls.listReviews, { owner, repo, pull_number: prNumber, per_page: 100 })) {
             for (const review of reviews) {
-                if (review.user?.login) {
+                if (review.user?.login &&
+                    (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED')) {
                     latestReviewByUser.set(review.user.login, review.state);
                 }
             }

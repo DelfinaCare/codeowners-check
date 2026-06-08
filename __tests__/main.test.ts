@@ -438,6 +438,35 @@ describe('main.ts', () => {
     )
   })
 
+  it('preserves APPROVED state when a later COMMENTED review would otherwise clobber it', async () => {
+    // GitHub returns reviews in reverse-chronological order (newest first).
+    // approver first submitted APPROVED, then added a comment (COMMENTED).
+    // The COMMENTED review must not overwrite the APPROVED state in the map.
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [
+            { user: { login: 'frontend-dev' }, state: 'COMMENTED' },
+            { user: { login: 'frontend-dev' }, state: 'APPROVED' }
+          ]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/app.ts' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.info).toHaveBeenCalledWith(
+      expect.stringContaining('CODEOWNERS check passed')
+    )
+  })
+
   it('uses codeowners-contents instead of fetching from the API', async () => {
     core.getInput.mockImplementation((name: string) => {
       if (name === 'github-token') return 'fake-token'
