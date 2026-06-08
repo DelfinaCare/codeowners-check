@@ -36205,8 +36205,13 @@ async function run() {
             }
             // At least one required owner must be a participant AND no required owner
             // may have an outstanding CHANGES_REQUESTED review.
+            // We must check every owner entry (no early break on satisfied) because a
+            // later entry in the list might have CHANGES_REQUESTED, which acts as a
+            // hard block even when an earlier entry already satisfied the requirement.
             let satisfied = false;
             let blockedByChangesRequested = false;
+            const changesRequestedArr = [...changesRequestedBy];
+            const participantsArr = [...participants];
             for (const ownerEntry of owners) {
                 const stripped = ownerEntry.startsWith('@')
                     ? ownerEntry.slice(1)
@@ -36218,17 +36223,18 @@ async function run() {
                     const teamSlug = stripped.slice(slashIndex + 1);
                     const teamLogins = await getTeamMembers(teamOrg, teamSlug);
                     if (teamLogins) {
-                        if ([...changesRequestedBy].some((u) => teamLogins.has(u))) {
-                            const blocker = [...changesRequestedBy].find((u) => teamLogins.has(u)) ??
-                                'unknown member';
+                        const blocker = changesRequestedArr.find((u) => teamLogins.has(u));
+                        if (blocker) {
                             debug(`File "${file}" blocked by CHANGES_REQUESTED from ${blocker} in "${teamOrg}/${teamSlug}".`);
                             blockedByChangesRequested = true;
+                            break;
                         }
-                        else if ([...participants].some((p) => teamLogins.has(p))) {
-                            const member = [...participants].find((p) => teamLogins.has(p)) ??
-                                'unknown member';
-                            debug(`File "${file}" approved by owner ${member} in "${teamOrg}/${teamSlug}".`);
-                            satisfied = true;
+                        else {
+                            const member = participantsArr.find((p) => teamLogins.has(p));
+                            if (member) {
+                                debug(`File "${file}" approved by owner ${member} in "${teamOrg}/${teamSlug}".`);
+                                satisfied = true;
+                            }
                         }
                     }
                 }
@@ -36236,6 +36242,7 @@ async function run() {
                     if (changesRequestedBy.has(stripped)) {
                         debug(`File "${file}" blocked by CHANGES_REQUESTED from "${ownerEntry}".`);
                         blockedByChangesRequested = true;
+                        break;
                     }
                     else if (participants.has(stripped)) {
                         debug(`File "${file}" approved by owner "${ownerEntry}".`);
