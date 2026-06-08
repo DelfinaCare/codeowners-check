@@ -23,10 +23,13 @@ requests while counting the PR author as an eligible owner.
 - `ignore-authors`: Comma- or newline-separated list of PR authors for which the
   CODEOWNERS check should be skipped entirely.
 - `always-succeed-before-approval`: (default `'true'`) When true, the action
-  exits successfully if the PR has no approvals yet, even if the CODEOWNERS
-  check would otherwise have failed. This avoids spurious CI failures while a PR
-  is still awaiting its first review. Most workflows already enforce at least
-  one approval via branch protection, making this safe to leave enabled.
+  exits successfully if the PR has neither approvals nor outstanding
+  `CHANGES_REQUESTED` reviews yet, even if the CODEOWNERS check would otherwise
+  have failed. This avoids spurious CI failures while a PR is still awaiting its
+  first review. Most workflows already enforce at least one approval via branch
+  protection, making this safe to leave enabled. Note: if any reviewer has
+  submitted a `CHANGES_REQUESTED` review, the early-exit is skipped and the full
+  CODEOWNERS check runs regardless of this setting.
 - `status-check-name`: When set, the action posts a commit status with this name
   to the PR head SHA on every real outcome (success or failure), except when
   exiting early because there are no approvals yet and
@@ -34,3 +37,16 @@ requests while counting the PR author as an eligible owner.
   as a **required status check** in your branch protection rules so that the
   protection requirement is satisfied or blocked based on the CODEOWNERS check
   result.
+
+## Review-state handling
+
+The action inspects the **latest** review submitted by each reviewer and
+classifies it as one of the following:
+
+- **APPROVED** — the reviewer counts as a valid approver for any files they own.
+- **CHANGES_REQUESTED** — the reviewer's objection acts as a hard block. Even if
+  another required owner has approved (or the PR author is themselves an owner),
+  the check fails for any file owned by a reviewer who has outstanding change
+  requests. The block is lifted automatically once the reviewer changes their
+  review to `APPROVED` or dismisses it.
+- Any other state (e.g. `COMMENTED`, `DISMISSED`, `PENDING`) — ignored.

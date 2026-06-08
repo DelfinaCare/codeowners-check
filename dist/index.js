@@ -36100,7 +36100,10 @@ async function run() {
         const approvers = new Set([...latestReviewByUser.entries()]
             .filter(([, state]) => state === 'APPROVED')
             .map(([login]) => login));
-        if (approvers.size === 0) {
+        const changesRequestedBy = new Set([...latestReviewByUser.entries()]
+            .filter(([, state]) => state === 'CHANGES_REQUESTED')
+            .map(([login]) => login));
+        if (approvers.size === 0 && changesRequestedBy.size === 0) {
             if (alwaysSucceedBeforeApproval) {
                 info('No approvals found — skipping CODEOWNERS check.');
                 return;
@@ -36108,6 +36111,9 @@ async function run() {
             debug('No approvals found but alwaysSucceedBeforeApproval is false — continuing CODEOWNERS check.');
         }
         info(`Approvers: ${[...approvers].join(', ')}`);
+        if (changesRequestedBy.size > 0) {
+            info(`Changes requested by: ${[...changesRequestedBy].join(', ')}`);
+        }
         // 2. Exit success if the PR author is in ignore-authors
         if (ignoreAuthors.includes(prAuthor)) {
             info(`Author "${prAuthor}" is in ignore-authors — CODEOWNERS check passes.`);
@@ -36197,35 +36203,47 @@ async function run() {
                 // No owners required — file passes
                 continue;
             }
-            // At least one required owner must be a participant
+            // At least one required owner must be a participant AND no required owner
+            // may have an outstanding CHANGES_REQUESTED review.
             let satisfied = false;
+            let blockedByChangesRequested = false;
             for (const ownerEntry of owners) {
                 const stripped = ownerEntry.startsWith('@')
                     ? ownerEntry.slice(1)
                     : ownerEntry;
                 if (stripped.includes('/')) {
-                    // Team entry: org/team-slug — check if any participant is a team member
+                    // Team entry: org/team-slug
                     const slashIndex = stripped.indexOf('/');
                     const teamOrg = stripped.slice(0, slashIndex);
                     const teamSlug = stripped.slice(slashIndex + 1);
                     const teamLogins = await getTeamMembers(teamOrg, teamSlug);
-                    if (teamLogins && [...participants].some((p) => teamLogins.has(p))) {
-                        const member = [...participants].find((p) => teamLogins.has(p)) ??
-                            'unknown member';
-                        debug(`File "${file}" approved by owner ${member} in "${teamOrg}/${teamSlug}".`);
-                        satisfied = true;
-                        break;
+                    if (teamLogins) {
+                        if ([...changesRequestedBy].some((u) => teamLogins.has(u))) {
+                            const blocker = [...changesRequestedBy].find((u) => teamLogins.has(u)) ??
+                                'unknown member';
+                            debug(`File "${file}" blocked by CHANGES_REQUESTED from ${blocker} in "${teamOrg}/${teamSlug}".`);
+                            blockedByChangesRequested = true;
+                        }
+                        else if ([...participants].some((p) => teamLogins.has(p))) {
+                            const member = [...participants].find((p) => teamLogins.has(p)) ??
+                                'unknown member';
+                            debug(`File "${file}" approved by owner ${member} in "${teamOrg}/${teamSlug}".`);
+                            satisfied = true;
+                        }
                     }
                 }
                 else {
-                    if (participants.has(stripped)) {
+                    if (changesRequestedBy.has(stripped)) {
+                        debug(`File "${file}" blocked by CHANGES_REQUESTED from "${ownerEntry}".`);
+                        blockedByChangesRequested = true;
+                    }
+                    else if (participants.has(stripped)) {
                         debug(`File "${file}" approved by owner "${ownerEntry}".`);
                         satisfied = true;
-                        break;
                     }
                 }
             }
-            if (!satisfied) {
+            if (!satisfied || blockedByChangesRequested) {
                 failures.push({ file, requiredOwners: owners });
             }
         }

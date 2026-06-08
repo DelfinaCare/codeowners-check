@@ -438,6 +438,138 @@ describe('main.ts', () => {
     )
   })
 
+  it('does NOT skip check when always-succeed-before-approval is true but there are CHANGES_REQUESTED reviews', async () => {
+    // default mock already sets always-succeed-before-approval to true
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'bob' }, state: 'CHANGES_REQUESTED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/app.ts' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { content: b64(BASE_CODEOWNERS), encoding: 'base64' }
+        })
+      })
+    )
+
+    await run()
+
+    // The early-exit is skipped; the full check runs and fails because no one
+    // satisfies the CODEOWNERS requirement.
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('src/app.ts')
+    )
+    expect(core.info).not.toHaveBeenCalledWith(
+      expect.stringContaining('No approvals found')
+    )
+  })
+
+  it('fails when a required owner has CHANGES_REQUESTED even if another owner approved', async () => {
+    // alice (PR author) approved; bob also approved; but carol requested changes.
+    // CODEOWNERS: *.ts @bob @carol
+    // bob approved, carol requested changes → carol's block should cause failure.
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [
+            { user: { login: 'bob' }, state: 'APPROVED' },
+            { user: { login: 'carol' }, state: 'CHANGES_REQUESTED' }
+          ]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/app.ts' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { content: b64('*.ts @bob @carol\n'), encoding: 'base64' }
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('src/app.ts')
+    )
+  })
+
+  it('fails when the PR author is a required owner but another required owner has CHANGES_REQUESTED', async () => {
+    // alice (PR author) is the owner of *.ts files but bob also owns them and
+    // has requested changes.
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'bob' }, state: 'CHANGES_REQUESTED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/app.ts' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { content: b64('*.ts @alice @bob\n'), encoding: 'base64' }
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('src/app.ts')
+    )
+  })
+
+  it('passes when the CHANGES_REQUESTED reviewer does not own the changed files', async () => {
+    // bob requested changes but bob is NOT an owner of *.ts; frontend-dev owns them.
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [
+            { user: { login: 'frontend-dev' }, state: 'APPROVED' },
+            { user: { login: 'bob' }, state: 'CHANGES_REQUESTED' }
+          ]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/app.ts' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.info).toHaveBeenCalledWith(
+      expect.stringContaining('CODEOWNERS check passed')
+    )
+  })
+
+  it('fails when a team member has CHANGES_REQUESTED and the team owns the file', async () => {
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'team-member' }, state: 'CHANGES_REQUESTED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/app.ts' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { content: b64('*.ts @myorg/frontend\n'), encoding: 'base64' }
+        }),
+        listMembersInOrg: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ login: 'team-member' }, { login: 'other-member' }]
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('src/app.ts')
+    )
+  })
+
   it('uses codeowners-contents instead of fetching from the API', async () => {
     core.getInput.mockImplementation((name: string) => {
       if (name === 'github-token') return 'fake-token'
