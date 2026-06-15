@@ -285,7 +285,7 @@ export async function run(): Promise<void> {
     for (const file of relevantFiles) {
       const owners = getOwnersForFile(file, entries)
       if (owners.length === 0) {
-        // No owners required — file passes
+        failures.push({ file, requiredOwners: owners })
         continue
       }
 
@@ -327,9 +327,10 @@ export async function run(): Promise<void> {
 
     // 6. Fail with per-file owner details when requirements are not met
     if (failures.length > 0) {
-      const lines = failures.map(
-        ({ file, requiredOwners }) =>
-          `  ${file}: requires approval from ${requiredOwners.join(' or ')}`
+      const lines = failures.map(({ file, requiredOwners }) =>
+        requiredOwners.length === 0
+          ? `  ${file}: has no matching CODEOWNERS owners`
+          : `  ${file}: requires approval from ${requiredOwners.join(' or ')}`
       )
       core.setFailed(
         `CODEOWNERS check failed. The following files need approval:\n${lines.join('\n')}`

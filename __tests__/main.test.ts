@@ -238,6 +238,31 @@ describe('main.ts', () => {
     )
   })
 
+  it('fails when a changed file has no matching CODEOWNERS entry', async () => {
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'package.json' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: {
+            content: b64('*.ts @frontend-dev\n'),
+            encoding: 'base64'
+          }
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('package.json: has no matching CODEOWNERS owners')
+    )
+  })
+
   it('passes when the PR author is themselves an owner', async () => {
     // alice is the PR author (set in beforeEach) and also the owner
     gh.getOctokit.mockReturnValue(
