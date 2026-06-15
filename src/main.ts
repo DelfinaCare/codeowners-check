@@ -248,7 +248,7 @@ export async function run(): Promise<void> {
 
     // 5. Evaluate each relevant file against CODEOWNERS
     const participants = new Set<string>([prAuthor, ...approvers])
-    const failures: { file: string; requiredOwners: string[] }[] = []
+    const failures: { file: string; message: string }[] = []
     // Cache team membership lookups so the same team is only fetched once
     const teamMembersCache = new Map<string, Set<string> | null>()
 
@@ -285,7 +285,7 @@ export async function run(): Promise<void> {
     for (const file of relevantFiles) {
       const owners = getOwnersForFile(file, entries)
       if (owners.length === 0) {
-        failures.push({ file, requiredOwners: owners })
+        failures.push({ file, message: 'has no matching CODEOWNERS owners' })
         continue
       }
 
@@ -321,17 +321,16 @@ export async function run(): Promise<void> {
       }
 
       if (!satisfied) {
-        failures.push({ file, requiredOwners: owners })
+        failures.push({
+          file,
+          message: `requires approval from ${owners.join(' or ')}`
+        })
       }
     }
 
     // 6. Fail with per-file owner details when requirements are not met
     if (failures.length > 0) {
-      const lines = failures.map(({ file, requiredOwners }) =>
-        requiredOwners.length === 0
-          ? `  ${file}: has no matching CODEOWNERS owners`
-          : `  ${file}: requires approval from ${requiredOwners.join(' or ')}`
-      )
+      const lines = failures.map(({ file, message }) => `  ${file}: ${message}`)
       core.setFailed(
         `CODEOWNERS check failed. The following files need approval:\n${lines.join('\n')}`
       )
