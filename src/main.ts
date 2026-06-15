@@ -285,7 +285,7 @@ export async function run(): Promise<void> {
     for (const file of relevantFiles) {
       const owners = getOwnersForFile(file, entries)
       if (owners.length === 0) {
-        failures.push({ file, message: 'has no matching CODEOWNERS owners' })
+        failures.push({ file, message: 'has no matching CODEOWNERS entry' })
         continue
       }
 

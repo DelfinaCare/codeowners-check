@@ -259,7 +259,7 @@ describe('main.ts', () => {
     await run()
 
     expect(core.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('package.json: has no matching CODEOWNERS owners')
+      expect.stringContaining('package.json: has no matching CODEOWNERS entry')
     )
   })
 
