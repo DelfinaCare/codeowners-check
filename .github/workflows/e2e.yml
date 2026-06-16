@@ -82,7 +82,7 @@ jobs:
         continue-on-error: true
         with:
           codeowners-contents: |
-            *.ts @fakeorg/faketeam
+            * @fakeorg/faketeam
 
       - name: Fail if current_approver_is_not_owner succeeded
         if: steps.current_approver_is_not_owner.outcome == 'success'
