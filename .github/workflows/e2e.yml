@@ -53,7 +53,7 @@ jobs:
         with:
           always-succeed-before-approval: false
           codeowners-contents: |
-            *. @fakeorg/faketeam
+            * @fakeorg/faketeam
             * @${{ github.event.pull_request.user.login }}
 
   test-action-pr-review:
