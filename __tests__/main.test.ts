@@ -190,6 +190,103 @@ describe('main.ts', () => {
     )
   })
 
+  it('fails when the CODEOWNERS path resolves to a directory', async () => {
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/foo.ts' }]
+        }),
+        // A directory response is returned as an array.
+        getContent: jest
+          .fn<() => Promise<unknown>>()
+          .mockResolvedValue({ data: [{ name: 'CODEOWNERS' }] })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to fetch CODEOWNERS file')
+    )
+  })
+
+  it('fails when the CODEOWNERS file is too large to decode (encoding none)', async () => {
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/foo.ts' }]
+        }),
+        // Files over ~1 MB come back with empty content and encoding "none".
+        getContent: jest
+          .fn<() => Promise<unknown>>()
+          .mockResolvedValue({ data: { content: '', encoding: 'none' } })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to fetch CODEOWNERS file')
+    )
+  })
+
+  it('matches owners case-insensitively', async () => {
+    // The approver's canonical login is lower-case "frontend-dev" but the
+    // CODEOWNERS file references "@Frontend-Dev".
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'frontend-dev' }, state: 'APPROVED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/app.ts' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { content: b64('*.ts @Frontend-Dev\n'), encoding: 'base64' }
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.info).toHaveBeenCalledWith(
+      expect.stringContaining('CODEOWNERS check passed')
+    )
+  })
+
+  it('matches team membership case-insensitively', async () => {
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'Team-Member' }, state: 'APPROVED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'src/app.ts' }]
+        }),
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { content: b64('*.ts @MyOrg/Frontend\n'), encoding: 'base64' }
+        }),
+        listMembersInOrg: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ login: 'team-member' }]
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.info).toHaveBeenCalledWith(
+      expect.stringContaining('CODEOWNERS check passed')
+    )
+  })
+
   it('passes when approver satisfies CODEOWNERS requirement', async () => {
     gh.getOctokit.mockReturnValue(
       gh.buildMockOctokit({

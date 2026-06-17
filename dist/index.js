@@ -35917,22 +35917,6 @@ minimatch.Minimatch = Minimatch;
 minimatch.escape = escape;
 minimatch.unescape = unescape;
 
-var index = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    AST: AST,
-    GLOBSTAR: GLOBSTAR,
-    Minimatch: Minimatch,
-    braceExpand: braceExpand,
-    defaults: defaults,
-    escape: escape,
-    filter: filter,
-    makeRe: makeRe,
-    match: match,
-    minimatch: minimatch,
-    sep: sep,
-    unescape: unescape
-});
-
 /**
  * Parses the content of a CODEOWNERS file into an array of entries.
  *
@@ -35971,15 +35955,23 @@ function getOwnersForFile(filePath, entries) {
     }
     return [];
 }
+// Cache compiled regexes so the same pattern is only translated once.
+const patternRegexCache = new Map();
 /**
  * Checks whether a file path matches a CODEOWNERS pattern.
  *
  * CODEOWNERS patterns follow .gitignore rules:
- * - A pattern without a slash (except trailing) matches anywhere in the tree.
+ * - A pattern without an interior slash (e.g. `*.ts`, `build/`) matches anywhere
+ *   in the tree (as if it were prefixed with `**` /).
  * - A pattern with a leading slash is anchored to the repo root.
  * - A pattern with an interior slash but no leading slash is also anchored.
+ * - A pattern ending in `/` matches the directory and everything beneath it.
  * - `**` matches any number of path segments.
- * - `*` matches within a single segment (no `/`).
+ * - A standalone `*` segment matches exactly one path segment (it does not match
+ *   across `/`) and, unlike a literal segment, does not implicitly match the
+ *   directory's descendants.
+ * - A literal (or partially-wildcarded) final segment also matches everything
+ *   beneath it, so `src/api` matches `src/api/handler.ts`.
  *
  * @param filePath The file path relative to the repo root.
  * @param pattern  The CODEOWNERS pattern.
@@ -35988,22 +35980,108 @@ function getOwnersForFile(filePath, entries) {
 function matchesPattern(filePath, pattern) {
     // Normalise the file path: strip leading slash if present
     const normalised = filePath.startsWith('/') ? filePath.slice(1) : filePath;
-    // Patterns that contain a slash (other than a purely trailing one) are
-    // anchored to the root, per .gitignore / CODEOWNERS semantics.
-    const hasInteriorSlash = pattern.includes('/') && !pattern.match(/^[^/]*\/$/);
-    const opts = { dot: true, matchBase: !hasInteriorSlash };
-    // Strip leading slash from the pattern before passing to minimatch
-    const normPattern = pattern.startsWith('/') ? pattern.slice(1) : pattern;
-    // A pattern that ends with "/" matches the directory and everything inside
-    if (normPattern.endsWith('/')) {
-        const dirPattern = normPattern + '**';
-        return minimatch(normalised, dirPattern, opts);
+    const regex = patternToRegExp(pattern);
+    if (!regex)
+        return false;
+    return regex.test(normalised);
+}
+/**
+ * Translates a CODEOWNERS (gitignore-style) pattern into an anchored regular
+ * expression following the same semantics GitHub uses to resolve code owners.
+ *
+ * @param pattern The CODEOWNERS pattern.
+ * @returns A compiled RegExp, or null when the pattern matches nothing.
+ */
+function patternToRegExp(pattern) {
+    if (patternRegexCache.has(pattern))
+        return patternRegexCache.get(pattern);
+    const compiled = buildRegExp(pattern);
+    patternRegexCache.set(pattern, compiled);
+    return compiled;
+}
+function buildRegExp(pattern) {
+    // "/" on its own matches nothing.
+    if (pattern === '' || pattern === '/')
+        return null;
+    let segments = pattern.split('/');
+    if (segments[0] === '') {
+        // Leading slash: the pattern is anchored to the repository root.
+        segments = segments.slice(1);
     }
-    if (minimatch(normalised, normPattern, opts))
-        return true;
-    // Also match everything inside a matched directory (pattern matches both
-    // the directory itself and its contents, similar to gitignore behaviour).
-    return minimatch(normalised, normPattern + '/**', opts);
+    else if (segments.length === 1 ||
+        (segments.length === 2 && segments[1] === '')) {
+        // No leading slash and a single segment (e.g. `*.ts` or `build/`): the
+        // pattern may match at any depth, equivalent to a leading `**/`.
+        if (segments[0] !== '**') {
+            segments = ['**', ...segments];
+        }
+    }
+    // A trailing slash is equivalent to a trailing `/**` (directory contents).
+    if (segments.length > 1 && segments[segments.length - 1] === '') {
+        segments[segments.length - 1] = '**';
+    }
+    const sep = '/';
+    const lastIndex = segments.length - 1;
+    let needSep = false;
+    let re = '^';
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (seg === '**') {
+            if (i === 0 && i === lastIndex) {
+                re += '.+';
+            }
+            else if (i === 0) {
+                re += `(?:.+${sep})?`;
+                needSep = false;
+            }
+            else if (i === lastIndex) {
+                re += `${sep}.*`;
+            }
+            else {
+                re += `(?:${sep}.+)?`;
+                needSep = true;
+            }
+        }
+        else if (seg === '*') {
+            if (needSep)
+                re += sep;
+            // A standalone wildcard segment matches exactly one path segment.
+            re += `[^${sep}]+`;
+            needSep = true;
+        }
+        else {
+            if (needSep)
+                re += sep;
+            re += translateSegment(seg);
+            if (i === lastIndex) {
+                // A literal/partial final segment also matches its descendants.
+                re += `(?:${sep}.*)?`;
+            }
+            needSep = true;
+        }
+    }
+    re += '$';
+    return new RegExp(re);
+}
+/**
+ * Translates a single non-`**`, non-standalone-`*` pattern segment into a regex
+ * fragment, honouring `*` (any run of non-separator characters) and `?` (a
+ * single non-separator character) wildcards.
+ */
+function translateSegment(seg) {
+    let out = '';
+    for (const ch of seg) {
+        if (ch === '*') {
+            out += '[^/]*';
+        }
+        else if (ch === '?') {
+            out += '[^/]';
+        }
+        else {
+            out += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+    }
+    return out;
 }
 
 /**
@@ -36025,10 +36103,9 @@ function errorToString(error) {
 /**
  * Returns true when `filePath` matches any of the provided ignore patterns.
  */
-async function isIgnored(filePath, ignorePatterns) {
+function isIgnored(filePath, ignorePatterns) {
     if (ignorePatterns.length === 0)
         return false;
-    const { minimatch } = await Promise.resolve().then(function () { return index; });
     return ignorePatterns.some((pat) => minimatch(filePath, pat, { dot: true, matchBase: true }));
 }
 /**
@@ -36128,7 +36205,7 @@ async function run() {
         info(`Changed files: ${changedFiles.join(', ')}`);
         const relevantFiles = [];
         for (const file of changedFiles) {
-            if (!(await isIgnored(file, ignoreFilepaths))) {
+            if (!isIgnored(file, ignoreFilepaths)) {
                 relevantFiles.push(file);
             }
         }
@@ -36151,7 +36228,20 @@ async function run() {
                     path: codeownersPath,
                     ref: headSha
                 });
-                const data = response.data;
+                const responseData = response.data;
+                // A directory/symlink/submodule response (or anything that is not a
+                // single file) cannot be a CODEOWNERS file. Treating it as an empty
+                // file would silently disable the check, so fail loudly instead.
+                if (Array.isArray(responseData)) {
+                    throw new Error(`path "${codeownersPath}" is a directory, not a file`);
+                }
+                const data = responseData;
+                // Files larger than ~1 MB are returned with an "encoding" of "none" and
+                // empty content. Silently passing in that case would disable the check,
+                // so surface it as a failure and direct the user to codeowners-contents.
+                if (data.encoding && data.encoding !== 'base64') {
+                    throw new Error(`unsupported content encoding "${data.encoding}" (the file may exceed the 1 MB API limit — use the codeowners-contents input instead)`);
+                }
                 if (!data.content) {
                     info('CODEOWNERS file is empty — CODEOWNERS check passes.');
                     await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (empty CODEOWNERS file)');
@@ -36169,12 +36259,15 @@ async function run() {
         const entries = parseCodeowners(codeownersContent);
         debug(`Parsed ${entries.length} CODEOWNERS entries.`);
         // 5. Evaluate each relevant file against CODEOWNERS
-        const participants = new Set([prAuthor, ...approvers]);
+        // GitHub usernames and team slugs are case-insensitive, so compare on a
+        // lower-cased basis to avoid spurious failures when the CODEOWNERS file uses
+        // a different case than the canonical login returned by the API.
+        const participants = new Set([prAuthor, ...approvers].map((p) => p.toLowerCase()));
         const failures = [];
         // Cache team membership lookups so the same team is only fetched once
         const teamMembersCache = new Map();
         const getTeamMembers = async (teamOrg, teamSlug) => {
-            const cacheKey = `${teamOrg}/${teamSlug}`;
+            const cacheKey = `${teamOrg}/${teamSlug}`.toLowerCase();
             if (teamMembersCache.has(cacheKey)) {
                 return teamMembersCache.get(cacheKey);
             }
@@ -36182,7 +36275,7 @@ async function run() {
                 const logins = new Set();
                 for await (const { data: members } of octokit.paginate.iterator(octokit.rest.teams.listMembersInOrg, { org: teamOrg, team_slug: teamSlug, per_page: 100 })) {
                     for (const m of members) {
-                        logins.add(m.login);
+                        logins.add(m.login.toLowerCase());
                     }
                 }
                 teamMembersCache.set(cacheKey, logins);
@@ -36222,7 +36315,7 @@ async function run() {
                     }
                 }
                 else {
-                    if (participants.has(stripped)) {
+                    if (participants.has(stripped.toLowerCase())) {
                         debug(`File "${file}" approved by owner "${ownerEntry}".`);
                         satisfied = true;
                         break;

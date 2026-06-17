@@ -1,5 +1,6 @@
 import * as core from '@actions/core'
 import * as github from '@actions/github'
+import { minimatch } from 'minimatch'
 import { parseCodeowners, getOwnersForFile } from './codeowners.js'
 
 /**
@@ -23,12 +24,8 @@ function errorToString(error: unknown): string {
 /**
  * Returns true when `filePath` matches any of the provided ignore patterns.
  */
-async function isIgnored(
-  filePath: string,
-  ignorePatterns: string[]
-): Promise<boolean> {
+function isIgnored(filePath: string, ignorePatterns: string[]): boolean {
   if (ignorePatterns.length === 0) return false
-  const { minimatch } = await import('minimatch')
   return ignorePatterns.some((pat) =>
     minimatch(filePath, pat, { dot: true, matchBase: true })
   )
@@ -176,7 +173,7 @@ export async function run(): Promise<void> {
 
     const relevantFiles: string[] = []
     for (const file of changedFiles) {
-      if (!(await isIgnored(file, ignoreFilepaths))) {
+      if (!isIgnored(file, ignoreFilepaths)) {
         relevantFiles.push(file)
       }
     }
@@ -212,7 +209,22 @@ export async function run(): Promise<void> {
           path: codeownersPath,
           ref: headSha
         })
-        const data = response.data as { content?: string; encoding?: string }
+        const responseData = response.data
+        // A directory/symlink/submodule response (or anything that is not a
+        // single file) cannot be a CODEOWNERS file. Treating it as an empty
+        // file would silently disable the check, so fail loudly instead.
+        if (Array.isArray(responseData)) {
+          throw new Error(`path "${codeownersPath}" is a directory, not a file`)
+        }
+        const data = responseData as { content?: string; encoding?: string }
+        // Files larger than ~1 MB are returned with an "encoding" of "none" and
+        // empty content. Silently passing in that case would disable the check,
+        // so surface it as a failure and direct the user to codeowners-contents.
+        if (data.encoding && data.encoding !== 'base64') {
+          throw new Error(
+            `unsupported content encoding "${data.encoding}" (the file may exceed the 1 MB API limit — use the codeowners-contents input instead)`
+          )
+        }
         if (!data.content) {
           core.info('CODEOWNERS file is empty — CODEOWNERS check passes.')
           await setCommitStatus(
@@ -247,7 +259,12 @@ export async function run(): Promise<void> {
     core.debug(`Parsed ${entries.length} CODEOWNERS entries.`)
 
     // 5. Evaluate each relevant file against CODEOWNERS
-    const participants = new Set<string>([prAuthor, ...approvers])
+    // GitHub usernames and team slugs are case-insensitive, so compare on a
+    // lower-cased basis to avoid spurious failures when the CODEOWNERS file uses
+    // a different case than the canonical login returned by the API.
+    const participants = new Set<string>(
+      [prAuthor, ...approvers].map((p) => p.toLowerCase())
+    )
     const failures: { file: string; requiredOwners: string[] }[] = []
     // Cache team membership lookups so the same team is only fetched once
     const teamMembersCache = new Map<string, Set<string> | null>()
@@ -256,7 +273,7 @@ export async function run(): Promise<void> {
       teamOrg: string,
       teamSlug: string
     ): Promise<Set<string> | null> => {
-      const cacheKey = `${teamOrg}/${teamSlug}`
+      const cacheKey = `${teamOrg}/${teamSlug}`.toLowerCase()
       if (teamMembersCache.has(cacheKey)) {
         return teamMembersCache.get(cacheKey)!
       }
@@ -267,7 +284,7 @@ export async function run(): Promise<void> {
           { org: teamOrg, team_slug: teamSlug, per_page: 100 }
         )) {
           for (const m of members) {
-            logins.add(m.login)
+            logins.add(m.login.toLowerCase())
           }
         }
         teamMembersCache.set(cacheKey, logins)
@@ -312,7 +329,7 @@ export async function run(): Promise<void> {
             break
           }
         } else {
-          if (participants.has(stripped)) {
+          if (participants.has(stripped.toLowerCase())) {
             core.debug(`File "${file}" approved by owner "${ownerEntry}".`)
             satisfied = true
             break
