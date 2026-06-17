@@ -984,4 +984,157 @@ describe('main.ts', () => {
       expect(createCommitStatus).not.toHaveBeenCalled()
     })
   })
+
+  describe('files-missing-approver output', () => {
+    it('sets output to an empty array when the check passes', async () => {
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'frontend-dev' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/app.ts' }]
+          }),
+          getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+          })
+        })
+      )
+
+      await run()
+
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify([])
+      )
+    })
+
+    it('sets output to the list of failing files when the check fails', async () => {
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/app.ts' }, { filename: 'src/utils.ts' }]
+          }),
+          getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: {
+              content: b64(BASE_CODEOWNERS),
+              encoding: 'base64'
+            }
+          })
+        })
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalled()
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify(['src/app.ts', 'src/utils.ts'])
+      )
+    })
+
+    it('sets output to an empty array when not a pull request event', async () => {
+      gh.context.payload = {}
+      gh.getOctokit.mockReturnValue(gh.buildMockOctokit())
+
+      await run()
+
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify([])
+      )
+    })
+
+    it('sets output to an empty array when skipping due to no approvals', async () => {
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest
+            .fn<() => Promise<unknown>>()
+            .mockResolvedValue({ data: [] })
+        })
+      )
+
+      await run()
+
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify([])
+      )
+    })
+
+    it('sets output to an empty array when author is in ignore-authors', async () => {
+      core.getInput.mockImplementation((name: string) => {
+        if (name === 'github-token') return 'fake-token'
+        if (name === 'ignore-authors') return 'alice'
+        return ''
+      })
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          })
+        })
+      )
+
+      await run()
+
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify([])
+      )
+    })
+
+    it('sets output to an empty array when all changed files are ignored', async () => {
+      core.getInput.mockImplementation((name: string) => {
+        if (name === 'github-token') return 'fake-token'
+        if (name === 'ignore-filepaths') return 'dist/**'
+        return ''
+      })
+
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'dist/bundle.js' }]
+          })
+        })
+      )
+
+      await run()
+
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify([])
+      )
+    })
+
+    it('sets output to an empty array when the CODEOWNERS file is empty', async () => {
+      gh.getOctokit.mockReturnValue(
+        gh.buildMockOctokit({
+          listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          }),
+          listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+            data: [{ filename: 'src/foo.ts' }]
+          }),
+          getContent: jest
+            .fn<() => Promise<unknown>>()
+            .mockResolvedValue({ data: { content: '', encoding: 'base64' } })
+        })
+      )
+
+      await run()
+
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify([])
+      )
+    })
+  })
 })

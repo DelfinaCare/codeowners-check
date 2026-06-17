@@ -88,6 +88,7 @@ export async function run(): Promise<void> {
 
     if (!context.payload.pull_request) {
       core.info('Not a pull request event — skipping CODEOWNERS check.')
+      core.setOutput('files-missing-approver', JSON.stringify([]))
       return
     }
 
@@ -133,6 +134,7 @@ export async function run(): Promise<void> {
     if (approvers.size === 0) {
       if (alwaysSucceedBeforeApproval) {
         core.info('No approvals found — skipping CODEOWNERS check.')
+        core.setOutput('files-missing-approver', JSON.stringify([]))
         return
       }
       core.debug(
@@ -147,6 +149,7 @@ export async function run(): Promise<void> {
       core.info(
         `Author "${prAuthor}" is in ignore-authors — CODEOWNERS check passes.`
       )
+      core.setOutput('files-missing-approver', JSON.stringify([]))
       await setCommitStatus(
         octokit,
         owner,
@@ -182,6 +185,7 @@ export async function run(): Promise<void> {
       core.info(
         'All changed files are in ignore-filepaths — CODEOWNERS check passes.'
       )
+      core.setOutput('files-missing-approver', JSON.stringify([]))
       await setCommitStatus(
         octokit,
         owner,
@@ -227,6 +231,7 @@ export async function run(): Promise<void> {
         }
         if (!data.content) {
           core.info('CODEOWNERS file is empty — CODEOWNERS check passes.')
+          core.setOutput('files-missing-approver', JSON.stringify([]))
           await setCommitStatus(
             octokit,
             owner,
@@ -348,6 +353,10 @@ export async function run(): Promise<void> {
         ({ file, requiredOwners }) =>
           `  ${file}: requires approval from ${requiredOwners.join(' or ')}`
       )
+      core.setOutput(
+        'files-missing-approver',
+        JSON.stringify(failures.map(({ file }) => file))
+      )
       core.setFailed(
         `CODEOWNERS check failed. The following files need approval:\n${lines.join('\n')}`
       )
@@ -361,6 +370,7 @@ export async function run(): Promise<void> {
         'CODEOWNERS check failed'
       )
     } else {
+      core.setOutput('files-missing-approver', JSON.stringify([]))
       core.info('CODEOWNERS check passed.')
       await setCommitStatus(
         octokit,

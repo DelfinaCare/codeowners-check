@@ -58,6 +58,13 @@ inputs:
     required: false
     default: ''
 
+outputs:
+  files-missing-approver:
+    description: >-
+      JSON-encoded array of file paths that are missing a required approver. Use
+      fromJSON() in expressions to parse the value. Returns an empty array when
+      all files have required approvals or the check was skipped entirely.
+
 runs:
   using: node24
   main: dist/index.js
