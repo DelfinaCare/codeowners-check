@@ -61,3 +61,77 @@ src/api/ @org/backend
     expect(getOwnersForFile('anything.txt', emptyEntries)).toEqual([])
   })
 })
+
+describe('getOwnersForFile pattern semantics', () => {
+  it('a standalone "*" segment does not match across directories', () => {
+    const entries = parseCodeowners('apps/* @org/apps')
+    // Direct children match...
+    expect(getOwnersForFile('apps/main.ts', entries)).toEqual(['@org/apps'])
+    // ...but nested files do not (a single "*" cannot cross a "/").
+    expect(getOwnersForFile('apps/nested/main.ts', entries)).toEqual([])
+  })
+
+  it('a "*" catch-all matches files at any depth', () => {
+    const entries = parseCodeowners('* @org/default')
+    expect(getOwnersForFile('a/b/c/deep.ts', entries)).toEqual(['@org/default'])
+  })
+
+  it('an extension pattern matches at any depth', () => {
+    const entries = parseCodeowners('*.ts @org/frontend')
+    expect(getOwnersForFile('src/a/b/foo.ts', entries)).toEqual([
+      '@org/frontend'
+    ])
+  })
+
+  it('an unanchored directory pattern matches that directory anywhere', () => {
+    const entries = parseCodeowners('build/ @org/build')
+    expect(getOwnersForFile('build/out.o', entries)).toEqual(['@org/build'])
+    expect(getOwnersForFile('packages/x/build/out.o', entries)).toEqual([
+      '@org/build'
+    ])
+  })
+
+  it('a leading-slash pattern is anchored to the repository root', () => {
+    const entries = parseCodeowners('/docs/ @org/docs')
+    expect(getOwnersForFile('docs/guide.md', entries)).toEqual(['@org/docs'])
+    expect(getOwnersForFile('pkg/docs/guide.md', entries)).toEqual([])
+  })
+
+  it('a literal final segment also matches its descendants', () => {
+    const entries = parseCodeowners('src/api @org/backend')
+    expect(getOwnersForFile('src/api', entries)).toEqual(['@org/backend'])
+    expect(getOwnersForFile('src/api/handler.ts', entries)).toEqual([
+      '@org/backend'
+    ])
+  })
+
+  it('a "**/dir" pattern matches the directory at any depth', () => {
+    const entries = parseCodeowners('**/logs @org/ops')
+    expect(getOwnersForFile('build/logs/error.log', entries)).toEqual([
+      '@org/ops'
+    ])
+    expect(getOwnersForFile('a/b/logs/error.log', entries)).toEqual([
+      '@org/ops'
+    ])
+  })
+
+  it('a standalone "**" pattern matches every file', () => {
+    const entries = parseCodeowners('** @org/all')
+    expect(getOwnersForFile('a/b/c.txt', entries)).toEqual(['@org/all'])
+    expect(getOwnersForFile('top.txt', entries)).toEqual(['@org/all'])
+  })
+
+  it('an interior "**" matches zero or more intermediate segments', () => {
+    const entries = parseCodeowners('/src/**/test.ts @org/qa')
+    expect(getOwnersForFile('src/test.ts', entries)).toEqual(['@org/qa'])
+    expect(getOwnersForFile('src/a/b/test.ts', entries)).toEqual(['@org/qa'])
+    expect(getOwnersForFile('src/a/b/other.ts', entries)).toEqual([])
+  })
+
+  it('the "?" wildcard matches a single non-separator character', () => {
+    const entries = parseCodeowners('/file?.ts @org/x')
+    expect(getOwnersForFile('fileA.ts', entries)).toEqual(['@org/x'])
+    expect(getOwnersForFile('file.ts', entries)).toEqual([])
+    expect(getOwnersForFile('file/.ts', entries)).toEqual([])
+  })
+})
