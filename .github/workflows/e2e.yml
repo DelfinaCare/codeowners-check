@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Test Local Action With All Files Ignored
         id: all_files_ignored
@@ -66,7 +66,7 @@ jobs:
     steps:
       - name: Checkout
         id: checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Test Local Action Where Current Approver is Owner
         id: current_approver_is_owner
