@@ -56,6 +56,29 @@ jobs:
             * @fakeorg/faketeam
             * @${{ github.event.pull_request.user.login }}
 
+      - name: Test Local Action Where No Approvers Match
+        id: no_matching
+        uses: ./
+        continue-on-error: true
+        with:
+          always-succeed-before-approval: false
+          codeowners-path: .github/workflows/E2E_NONMATCHING_CODEOWNERS
+
+      - name: Fail if current_approver_is_not_owner succeeded
+        if: steps.no_matching.outcome == 'success'
+        run: |
+          echo "Error: current_approver_is_not_owner should have failed but succeeded" && exit 1
+
+      - name: Fail if files-missing-approver is not an array of strings
+        run: |
+          echo '${{ steps.no_matching.outputs.files-missing-approver }}' | jq -e 'map(select(type == "string"))' > /dev/null
+
+      - name: Fail if files-missing-approver is not an array longer than 0
+        run: |
+          if [ ! "$(echo '${{ steps.no_matching.outputs.files-missing-approver }}' | jq 'length')" -gt 0 ]; then
+            echo "Error: files-missing-approver should be an array longer than 0" && exit 1
+          fi
+
   test-action-pr-review:
     name: E2E Action Tests PR Review Event
     runs-on: ubuntu-latest
@@ -75,15 +98,3 @@ jobs:
           codeowners-contents: |
             * @fakeorg/faketeam
             * @${{ github.event.review.user.login }}
-
-      - name: Test Local Action Where Current Approver is Not Owner
-        id: current_approver_is_not_owner
-        uses: ./
-        continue-on-error: true
-        with:
-          codeowners-path: .github/workflows/E2E_NONMATCHING_CODEOWNERS
-
-      - name: Fail if current_approver_is_not_owner succeeded
-        if: steps.current_approver_is_not_owner.outcome == 'success'
-        run: |
-          echo "Error: current_approver_is_not_owner should have failed but succeeded" && exit 1

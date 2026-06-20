@@ -1,6 +1,6 @@
 import * as os from 'os';
 import os__default, { EOL } from 'os';
-import 'crypto';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import { promises, existsSync, readFileSync } from 'fs';
 import 'path';
@@ -152,6 +152,36 @@ function escapeProperty(s) {
         .replace(/\n/g, '%0A')
         .replace(/:/g, '%3A')
         .replace(/,/g, '%2C');
+}
+
+// For internal use, subject to change.
+// We use any as a valid input type
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function issueFileCommand(command, message) {
+    const filePath = process.env[`GITHUB_${command}`];
+    if (!filePath) {
+        throw new Error(`Unable to find environment variable for file command ${command}`);
+    }
+    if (!fs.existsSync(filePath)) {
+        throw new Error(`Missing file at path: ${filePath}`);
+    }
+    fs.appendFileSync(filePath, `${toCommandValue(message)}${os.EOL}`, {
+        encoding: 'utf8'
+    });
+}
+function prepareKeyValueMessage(key, value) {
+    const delimiter = `ghadelimiter_${crypto.randomUUID()}`;
+    const convertedValue = toCommandValue(value);
+    // These should realistically never happen, but just in case someone finds a
+    // way to exploit uuid generation let's not allow keys or values that contain
+    // the delimiter.
+    if (key.includes(delimiter)) {
+        throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
+    }
+    if (convertedValue.includes(delimiter)) {
+        throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
+    }
+    return `${key}<<${delimiter}${os.EOL}${convertedValue}${os.EOL}${delimiter}`;
 }
 
 var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
@@ -28153,6 +28183,21 @@ function getBooleanInput(name, options) {
     throw new TypeError(`Input does not meet YAML 1.2 "Core Schema" specification: ${name}\n` +
         `Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
 }
+/**
+ * Sets the value of an output.
+ *
+ * @param     name     name of the output to set
+ * @param     value    value to store. Non-string values will be converted to a string via JSON.stringify
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function setOutput(name, value) {
+    const filePath = process.env['GITHUB_OUTPUT'] || '';
+    if (filePath) {
+        return issueFileCommand('OUTPUT', prepareKeyValueMessage(name, value));
+    }
+    process.stdout.write(os.EOL);
+    issueCommand('set-output', { name }, toCommandValue(value));
+}
 //-----------------------------------------------------------------------
 // Results
 //-----------------------------------------------------------------------
@@ -36151,6 +36196,7 @@ async function run() {
         const { context } = github;
         if (!context.payload.pull_request) {
             info('Not a pull request event — skipping CODEOWNERS check.');
+            setOutput('files-missing-approver', JSON.stringify([]));
             return;
         }
         const prNumber = context.payload.pull_request.number;
@@ -36184,6 +36230,7 @@ async function run() {
         if (approvers.size === 0) {
             if (alwaysSucceedBeforeApproval) {
                 info('No approvals found — skipping CODEOWNERS check.');
+                setOutput('files-missing-approver', JSON.stringify([]));
                 return;
             }
             debug('No approvals found but alwaysSucceedBeforeApproval is false — continuing CODEOWNERS check.');
@@ -36192,6 +36239,7 @@ async function run() {
         // 2. Exit success if the PR author is in ignore-authors
         if (ignoreAuthors.includes(prAuthor)) {
             info(`Author "${prAuthor}" is in ignore-authors — CODEOWNERS check passes.`);
+            setOutput('files-missing-approver', JSON.stringify([]));
             await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (author in ignore-authors)');
             return;
         }
@@ -36211,6 +36259,7 @@ async function run() {
         }
         if (relevantFiles.length === 0) {
             info('All changed files are in ignore-filepaths — CODEOWNERS check passes.');
+            setOutput('files-missing-approver', JSON.stringify([]));
             await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (all files ignored)');
             return;
         }
@@ -36244,6 +36293,7 @@ async function run() {
                 }
                 if (!data.content) {
                     info('CODEOWNERS file is empty — CODEOWNERS check passes.');
+                    setOutput('files-missing-approver', JSON.stringify([]));
                     await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (empty CODEOWNERS file)');
                     return;
                 }
@@ -36329,10 +36379,12 @@ async function run() {
         // 6. Fail with per-file owner details when requirements are not met
         if (failures.length > 0) {
             const lines = failures.map(({ file, requiredOwners }) => `  ${file}: requires approval from ${requiredOwners.join(' or ')}`);
+            setOutput('files-missing-approver', JSON.stringify(failures.map(({ file }) => file)));
             setFailed(`CODEOWNERS check failed. The following files need approval:\n${lines.join('\n')}`);
             await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'failure', 'CODEOWNERS check failed');
         }
         else {
+            setOutput('files-missing-approver', JSON.stringify([]));
             info('CODEOWNERS check passed.');
             await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed');
         }
