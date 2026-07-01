@@ -145,6 +145,32 @@ describe('main.ts', () => {
     )
   })
 
+  it('skips check when all changed files are in an ignored subdirectory', async () => {
+    core.getInput.mockImplementation((name: string) => {
+      if (name === 'github-token') return 'fake-token'
+      if (name === 'ignore-filepaths') return 'dist/**'
+      return ''
+    })
+
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: 'dist/nested/deep/bundle.js' }]
+        })
+      })
+    )
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.info).toHaveBeenCalledWith(
+      expect.stringContaining('ignore-filepaths')
+    )
+  })
+
   it('skips check when CODEOWNERS file is not found', async () => {
     gh.getOctokit.mockReturnValue(
       gh.buildMockOctokit({
