@@ -36275,29 +36275,22 @@ async function run() {
                     owner,
                     repo,
                     path: codeownersPath,
-                    ref: headSha
+                    ref: headSha,
+                    headers: {
+                        accept: 'application/vnd.github.raw'
+                    }
                 });
-                const responseData = response.data;
-                // A directory/symlink/submodule response (or anything that is not a
-                // single file) cannot be a CODEOWNERS file. Treating it as an empty
-                // file would silently disable the check, so fail loudly instead.
-                if (Array.isArray(responseData)) {
-                    throw new Error(`path "${codeownersPath}" is a directory, not a file`);
-                }
-                const data = responseData;
-                // Files larger than ~1 MB are returned with an "encoding" of "none" and
-                // empty content. Silently passing in that case would disable the check,
-                // so surface it as a failure and direct the user to codeowners-contents.
-                if (data.encoding && data.encoding !== 'base64') {
-                    throw new Error(`unsupported content encoding "${data.encoding}" (the file may exceed the 1 MB API limit — use the codeowners-contents input instead)`);
-                }
-                if (!data.content) {
+                // With the raw accept header the GitHub API returns the file contents
+                // directly as a string, bypassing the ~1 MB base64-encoding cap
+                // (supports files up to 100 MB).
+                const codeownersRaw = response.data;
+                if (!codeownersRaw) {
                     info('CODEOWNERS file is empty — CODEOWNERS check passes.');
                     setOutput('files-missing-approver', JSON.stringify([]));
                     await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (empty CODEOWNERS file)');
                     return;
                 }
-                codeownersContent = Buffer.from(data.content, 'base64').toString('utf8');
+                codeownersContent = codeownersRaw;
             }
             catch (error) {
                 const message = `Failed to fetch CODEOWNERS file at "${codeownersPath}" with error: ${errorToString(error)}`;
