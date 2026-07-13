@@ -18,11 +18,6 @@ jest.unstable_mockModule('@actions/github', () => gh)
 // mocks are used in place of any actual dependencies.
 const { run } = await import('../src/main.js')
 
-/** Build a base64-encoded CODEOWNERS content string. */
-function b64(content: string): string {
-  return Buffer.from(content).toString('base64')
-}
-
 const BASE_CODEOWNERS = '*.ts @org/frontend\n* @org/default\n'
 
 describe('main.ts', () => {
@@ -204,7 +199,7 @@ describe('main.ts', () => {
         }),
         getContent: jest
           .fn<() => Promise<unknown>>()
-          .mockResolvedValue({ data: { content: '', encoding: 'base64' } })
+          .mockResolvedValue({ data: '' })
       })
     )
 
@@ -225,10 +220,10 @@ describe('main.ts', () => {
         listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
           data: [{ filename: 'src/foo.ts' }]
         }),
-        // A directory response is returned as an array.
+        // With the raw accept header, GitHub returns a 422 error for directory paths.
         getContent: jest
           .fn<() => Promise<unknown>>()
-          .mockResolvedValue({ data: [{ name: 'CODEOWNERS' }] })
+          .mockRejectedValue(new Error('422 Unprocessable Entity'))
       })
     )
 
@@ -239,26 +234,29 @@ describe('main.ts', () => {
     )
   })
 
-  it('fails when the CODEOWNERS file is too large to decode (encoding none)', async () => {
+  it('succeeds when the CODEOWNERS file is larger than 1 MB', async () => {
+    // With the raw accept header, files up to 100 MB are returned as raw strings.
+    const largeCODEOWNERS = '*.ts @frontend-dev\n'.repeat(60_000)
+
     gh.getOctokit.mockReturnValue(
       gh.buildMockOctokit({
         listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+          data: [{ user: { login: 'frontend-dev' }, state: 'APPROVED' }]
         }),
         listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
           data: [{ filename: 'src/foo.ts' }]
         }),
-        // Files over ~1 MB come back with empty content and encoding "none".
         getContent: jest
           .fn<() => Promise<unknown>>()
-          .mockResolvedValue({ data: { content: '', encoding: 'none' } })
+          .mockResolvedValue({ data: largeCODEOWNERS })
       })
     )
 
     await run()
 
-    expect(core.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to fetch CODEOWNERS file')
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.info).toHaveBeenCalledWith(
+      expect.stringContaining('CODEOWNERS check passed')
     )
   })
 
@@ -274,7 +272,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: { content: b64('*.ts @Frontend-Dev\n'), encoding: 'base64' }
+          data: '*.ts @Frontend-Dev\n'
         })
       })
     )
@@ -297,7 +295,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: { content: b64('*.ts @MyOrg/Frontend\n'), encoding: 'base64' }
+          data: '*.ts @MyOrg/Frontend\n'
         }),
         listMembersInOrg: jest.fn<() => Promise<unknown>>().mockResolvedValue({
           data: [{ login: 'team-member' }]
@@ -323,7 +321,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+          data: '*.ts @frontend-dev\n'
         })
       })
     )
@@ -346,10 +344,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: {
-            content: b64(BASE_CODEOWNERS),
-            encoding: 'base64'
-          }
+          data: BASE_CODEOWNERS
         })
       })
     )
@@ -372,10 +367,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: {
-            content: b64('*.ts @alice\n'),
-            encoding: 'base64'
-          }
+          data: '*.ts @alice\n'
         })
       })
     )
@@ -405,10 +397,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: {
-            content: b64('*.ts @myorg/frontend\n'),
-            encoding: 'base64'
-          }
+          data: '*.ts @myorg/frontend\n'
         }),
         listMembersInOrg: jest.fn<() => Promise<unknown>>().mockResolvedValue({
           data: [{ login: 'team-member' }, { login: 'other-member' }]
@@ -434,10 +423,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: {
-            content: b64('*.ts @myorg/frontend\n'),
-            encoding: 'base64'
-          }
+          data: '*.ts @myorg/frontend\n'
         }),
         listMembersInOrg: jest.fn<() => Promise<unknown>>().mockResolvedValue({
           data: [{ login: 'team-member' }]
@@ -462,10 +448,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: {
-            content: b64('*.ts @myorg/nonexistent-team\n'),
-            encoding: 'base64'
-          }
+          data: '*.ts @myorg/nonexistent-team\n'
         }),
         listMembersInOrg: jest
           .fn<() => Promise<unknown>>()
@@ -498,10 +481,7 @@ describe('main.ts', () => {
           ]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: {
-            content: b64('*.ts @myorg/frontend\n'),
-            encoding: 'base64'
-          }
+          data: '*.ts @myorg/frontend\n'
         }),
         listMembersInOrg
       })
@@ -528,10 +508,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: {
-            content: b64(BASE_CODEOWNERS),
-            encoding: 'base64'
-          }
+          data: BASE_CODEOWNERS
         })
       })
     )
@@ -577,7 +554,7 @@ describe('main.ts', () => {
           data: [{ filename: 'src/app.ts' }]
         }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+          data: '*.ts @frontend-dev\n'
         })
       })
     )
@@ -675,7 +652,7 @@ describe('main.ts', () => {
             data: [{ filename: 'src/app.ts' }]
           }),
           getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-            data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+            data: '*.ts @frontend-dev\n'
           }),
           createCommitStatus
         })
@@ -730,7 +707,7 @@ describe('main.ts', () => {
             data: [{ filename: 'src/app.ts' }]
           }),
           getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-            data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+            data: '*.ts @frontend-dev\n'
           }),
           createCommitStatus
         })
@@ -829,7 +806,7 @@ describe('main.ts', () => {
           }),
           getContent: jest
             .fn<() => Promise<unknown>>()
-            .mockResolvedValue({ data: { content: '', encoding: 'base64' } }),
+            .mockResolvedValue({ data: '' }),
           createCommitStatus
         })
       )
@@ -862,10 +839,7 @@ describe('main.ts', () => {
             data: [{ filename: 'src/app.ts' }]
           }),
           getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-            data: {
-              content: b64(BASE_CODEOWNERS),
-              encoding: 'base64'
-            }
+            data: BASE_CODEOWNERS
           }),
           createCommitStatus
         })
@@ -899,10 +873,7 @@ describe('main.ts', () => {
             data: [{ filename: 'src/app.ts' }]
           }),
           getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-            data: {
-              content: b64(BASE_CODEOWNERS),
-              encoding: 'base64'
-            }
+            data: BASE_CODEOWNERS
           }),
           createCommitStatus
         })
@@ -1022,7 +993,7 @@ describe('main.ts', () => {
             data: [{ filename: 'src/app.ts' }]
           }),
           getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-            data: { content: b64('*.ts @frontend-dev\n'), encoding: 'base64' }
+            data: '*.ts @frontend-dev\n'
           })
         })
       )
@@ -1045,10 +1016,7 @@ describe('main.ts', () => {
             data: [{ filename: 'src/app.ts' }, { filename: 'src/utils.ts' }]
           }),
           getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-            data: {
-              content: b64(BASE_CODEOWNERS),
-              encoding: 'base64'
-            }
+            data: BASE_CODEOWNERS
           })
         })
       )
@@ -1151,7 +1119,7 @@ describe('main.ts', () => {
           }),
           getContent: jest
             .fn<() => Promise<unknown>>()
-            .mockResolvedValue({ data: { content: '', encoding: 'base64' } })
+            .mockResolvedValue({ data: '' })
         })
       )
 
