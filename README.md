@@ -34,3 +34,51 @@ requests while counting the PR author as an eligible owner.
   as a **required status check** in your branch protection rules so that the
   protection requirement is satisfied or blocked based on the CODEOWNERS check
   result.
+- `min-reviewers`: Newline-separated rules of the form `<pattern> <count>` that
+  set the minimum number of approving reviewers (excluding the PR author) for
+  files matching `<pattern>`. See
+  [Minimum required reviewers](#minimum-required-reviewers).
+- `default-min-reviewers`: (default `'0'`) Minimum number of approving reviewers
+  for files not matched by any `min-reviewers` rule.
+
+## Minimum required reviewers
+
+Besides CODEOWNERS, the action can require a minimum number of approving
+reviewers as a function of the files changed. Each changed file resolves its own
+minimum, and the PR must have at least the **highest** of those minimums in
+approvals from users other than the author. Files matched by `ignore-filepaths`
+are exempt, and the check is skipped for `ignore-authors`.
+
+- Patterns use CODEOWNERS syntax and, as in CODEOWNERS, the last matching rule
+  wins.
+- `{author}` in a pattern is replaced with the PR author's GitHub login (exact
+  case), so rules can target per-user folders.
+- Files that match no rule use `default-min-reviewers`.
+- Lines starting with `#` are comments. Malformed rules fail the action.
+
+For example, to let each user merge freely into `experimental/<their-login>/`
+while requiring one reviewer everywhere else and two for `infra/`:
+
+```yaml
+- uses: DelfinaCare/codeowners-check@main
+  with:
+    always-succeed-before-approval: false
+    status-check-name: codeowners-check
+    default-min-reviewers: 1
+    min-reviewers: |
+      /experimental/{author}/ 0
+      /infra/ 2
+```
+
+For this to take effect, set the branch protection rule's required approvals to
+`0`, make `status-check-name` a required status check, and set
+`always-succeed-before-approval` to `false` (otherwise PRs with no approvals
+exit early without posting a status). CODEOWNERS is still enforced on top of the
+minimum; the author counts as an owner, so a CODEOWNERS entry like
+`/experimental/alice/ @alice` lets Alice satisfy it for her own folder.
+
+Requirements are resolved by pluggable policies (see
+`src/review-requirements.ts`). Each policy receives the changed file, including
+its diff, and may return a minimum or defer to the next policy. Today only the
+path-based policy is wired up, but diff-based or AI risk-assessment policies can
+be added without changing how the requirement is enforced.

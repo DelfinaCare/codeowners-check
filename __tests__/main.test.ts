@@ -1131,4 +1131,201 @@ describe('main.ts', () => {
       )
     })
   })
+
+  describe('minimum required reviewers', () => {
+    const MIN_REVIEWERS = '* 1\n/experimental/{author}/ 0\n/infra/ 2'
+
+    function mockInputs(inputs: Record<string, string>): void {
+      core.getInput.mockImplementation((name: string) => {
+        if (name === 'github-token') return 'fake-token'
+        return inputs[name] ?? ''
+      })
+      core.getBooleanInput.mockReturnValue(false)
+    }
+
+    function mockOctokit(
+      approvers: string[],
+      files: string[],
+      createCommitStatus?: jest.Mock
+    ) {
+      const octokit = gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: approvers.map((login) => ({
+            user: { login },
+            state: 'APPROVED'
+          }))
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: files.map((filename) => ({ filename, patch: '+x' }))
+        }),
+        createCommitStatus
+      })
+      gh.getOctokit.mockReturnValue(octokit)
+      return octokit
+    }
+
+    it('lets the author merge their own experimental folder without reviewers', async () => {
+      mockInputs({
+        'min-reviewers': MIN_REVIEWERS,
+        'codeowners-contents': '/experimental/alice/ @alice\n'
+      })
+      mockOctokit([], ['experimental/alice/notebook.py'])
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(core.info).toHaveBeenCalledWith('CODEOWNERS check passed.')
+    })
+
+    it("requires a reviewer for another user's experimental folder", async () => {
+      mockInputs({
+        'min-reviewers': MIN_REVIEWERS,
+        'codeowners-contents': '* @alice\n'
+      })
+      mockOctokit([], ['experimental/bob/notebook.py'])
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'experimental/bob/notebook.py: requires 1 approving reviewer(s)'
+        )
+      )
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify(['experimental/bob/notebook.py'])
+      )
+    })
+
+    it('applies the strictest requirement across files', async () => {
+      mockInputs({
+        'min-reviewers': MIN_REVIEWERS,
+        'codeowners-contents': '* @alice\n'
+      })
+      mockOctokit(
+        ['bob'],
+        ['experimental/alice/a.py', 'src/a.ts', 'infra/x.tf']
+      )
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('infra/x.tf: requires 2 approving reviewer(s)')
+      )
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify(['infra/x.tf'])
+      )
+    })
+
+    it('passes once enough reviewers approve', async () => {
+      mockInputs({
+        'min-reviewers': MIN_REVIEWERS,
+        'codeowners-contents': '* @alice\n'
+      })
+      mockOctokit(['bob', 'carol'], ['src/a.ts', 'infra/x.tf'])
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+    })
+
+    it('does not count the author as a reviewer', async () => {
+      mockInputs({
+        'min-reviewers': '* 1',
+        'codeowners-contents': '* @alice\n'
+      })
+      mockOctokit(['Alice'], ['src/a.ts'])
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Minimum reviewer check failed')
+      )
+    })
+
+    it('uses default-min-reviewers when no rule matches', async () => {
+      mockInputs({
+        'default-min-reviewers': '1',
+        'codeowners-contents': '* @alice\n'
+      })
+      mockOctokit([], ['src/a.ts'])
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/a.ts: requires 1 approving reviewer(s)')
+      )
+    })
+
+    it('exempts files matched by ignore-filepaths', async () => {
+      mockInputs({
+        'default-min-reviewers': '1',
+        'ignore-filepaths': 'dist/**',
+        'codeowners-contents': '* @alice\n'
+      })
+      mockOctokit([], ['dist/index.js'])
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+    })
+
+    it('still enforces CODEOWNERS when the minimum is met', async () => {
+      mockInputs({
+        'min-reviewers': MIN_REVIEWERS,
+        'codeowners-contents': '* @org-owner\n'
+      })
+      mockOctokit(['bob'], ['src/a.ts'])
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('CODEOWNERS check failed')
+      )
+    })
+
+    it('posts a failure status when the minimum is not met', async () => {
+      mockInputs({
+        'min-reviewers': '* 1',
+        'codeowners-contents': '* @alice\n',
+        'status-check-name': 'codeowners'
+      })
+      const createCommitStatus = jest
+        .fn<() => Promise<unknown>>()
+        .mockResolvedValue({})
+      mockOctokit([], ['src/a.ts'], createCommitStatus)
+
+      await run()
+
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'failure',
+          description: 'Minimum reviewer check failed'
+        })
+      )
+    })
+
+    it('fails on malformed rules', async () => {
+      mockInputs({ 'min-reviewers': '/experimental/' })
+      mockOctokit(['bob'], ['src/a.ts'])
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid min-reviewers rule')
+      )
+    })
+
+    it('fails on a malformed default-min-reviewers', async () => {
+      mockInputs({ 'default-min-reviewers': 'one' })
+      mockOctokit(['bob'], ['src/a.ts'])
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid minimum reviewer count')
+      )
+    })
+  })
 })

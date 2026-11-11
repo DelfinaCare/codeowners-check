@@ -57,6 +57,22 @@ inputs:
       as the CODEOWNERS check passes.
     required: false
     default: ''
+  min-reviewers:
+    description: >-
+      Newline-separated rules of the form "<pattern> <count>" setting the
+      minimum number of approving reviewers (excluding the PR author) for files
+      matching <pattern>. Patterns use CODEOWNERS syntax and the last matching
+      rule wins. "{author}" in a pattern is replaced by the PR author's login,
+      e.g. "/experimental/{author}/ 0". The PR must satisfy the highest minimum
+      across its changed files (excluding ignore-filepaths).
+    required: false
+    default: ''
+  default-min-reviewers:
+    description: >-
+      Minimum number of approving reviewers (excluding the PR author) for files
+      not matched by any min-reviewers rule. Defaults to 0 (no minimum).
+    required: false
+    default: '0'
 
 outputs:
   files-missing-approver:

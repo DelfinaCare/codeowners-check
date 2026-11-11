@@ -73,7 +73,7 @@ const patternRegexCache = new Map<string, RegExp | null>()
  * @param pattern  The CODEOWNERS pattern.
  * @returns True if the file matches the pattern.
  */
-function matchesPattern(filePath: string, pattern: string): boolean {
+export function matchesPattern(filePath: string, pattern: string): boolean {
   // Normalise the file path: strip leading slash if present
   const normalised = filePath.startsWith('/') ? filePath.slice(1) : filePath
 

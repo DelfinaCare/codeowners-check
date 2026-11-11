@@ -2,6 +2,13 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { minimatch } from 'minimatch'
 import { parseCodeowners, getOwnersForFile } from './codeowners.js'
+import {
+  type ChangedFile,
+  createPathPolicy,
+  getMinReviewersForFile,
+  parseCount,
+  parseMinReviewersRules
+} from './review-requirements.js'
 
 /**
  * Splits a comma-or-newline-separated input string into a trimmed list of
@@ -81,6 +88,12 @@ export async function run(): Promise<void> {
       'always-succeed-before-approval'
     )
     statusCheckName = core.getInput('status-check-name')
+    const minReviewersRules = parseMinReviewersRules(
+      core.getInput('min-reviewers')
+    )
+    const defaultMinReviewers = parseCount(
+      core.getInput('default-min-reviewers') || '0'
+    )
 
     const octokit = github.getOctokit(token)
     octokitForCatch = octokit
@@ -163,23 +176,23 @@ export async function run(): Promise<void> {
     }
 
     // 3. Read changed files; exit success if all are in ignore-filepaths
-    const changedFiles: string[] = []
+    const changedFiles: ChangedFile[] = []
     for await (const { data: files } of octokit.paginate.iterator(
       octokit.rest.pulls.listFiles,
       { owner, repo, pull_number: prNumber, per_page: 100 }
     )) {
       for (const f of files) {
-        changedFiles.push(f.filename)
+        changedFiles.push({ filename: f.filename, patch: f.patch })
       }
     }
-    core.info(`Changed files: ${changedFiles.join(', ')}`)
+    core.info(
+      `Changed files: ${changedFiles.map((f) => f.filename).join(', ')}`
+    )
 
-    const relevantFiles: string[] = []
-    for (const file of changedFiles) {
-      if (!isIgnored(file, ignoreFilepaths)) {
-        relevantFiles.push(file)
-      }
-    }
+    const relevantChangedFiles = changedFiles.filter(
+      (f) => !isIgnored(f.filename, ignoreFilepaths)
+    )
+    const relevantFiles = relevantChangedFiles.map((f) => f.filename)
 
     if (relevantFiles.length === 0) {
       core.info(
@@ -198,7 +211,50 @@ export async function run(): Promise<void> {
       return
     }
 
-    // 4. Read CODEOWNERS — use provided contents or fetch from the PR head SHA
+    // 4. Enforce the minimum number of approving reviewers. Each file resolves
+    // its own minimum and the PR must satisfy the strictest one. The author
+    // never counts towards this number.
+    const reviewerCount = [...approvers].filter(
+      (login) => login.toLowerCase() !== prAuthor.toLowerCase()
+    ).length
+    const minReviewerPolicies = [createPathPolicy(minReviewersRules)]
+    const minReviewerFailures = relevantChangedFiles
+      .map((file) => ({
+        file: file.filename,
+        minReviewers: getMinReviewersForFile(
+          file,
+          { author: prAuthor },
+          minReviewerPolicies,
+          defaultMinReviewers
+        )
+      }))
+      .filter(({ minReviewers }) => minReviewers > reviewerCount)
+
+    if (minReviewerFailures.length > 0) {
+      const lines = minReviewerFailures.map(
+        ({ file, minReviewers }) =>
+          `  ${file}: requires ${minReviewers} approving reviewer(s)`
+      )
+      core.setOutput(
+        'files-missing-approver',
+        JSON.stringify(minReviewerFailures.map(({ file }) => file))
+      )
+      core.setFailed(
+        `Minimum reviewer check failed (${reviewerCount} approving reviewer(s)). The following files need more approvals:\n${lines.join('\n')}`
+      )
+      await setCommitStatus(
+        octokit,
+        owner,
+        repo,
+        headSha,
+        statusCheckName,
+        'failure',
+        'Minimum reviewer check failed'
+      )
+      return
+    }
+
+    // 5. Read CODEOWNERS — use provided contents or fetch from the PR head SHA
     let codeownersContent: string
     if (codeownersContents) {
       codeownersContent = codeownersContents
@@ -254,7 +310,7 @@ export async function run(): Promise<void> {
     const entries = parseCodeowners(codeownersContent)
     core.debug(`Parsed ${entries.length} CODEOWNERS entries.`)
 
-    // 5. Evaluate each relevant file against CODEOWNERS
+    // 6. Evaluate each relevant file against CODEOWNERS
     // GitHub usernames and team slugs are case-insensitive, so compare on a
     // lower-cased basis to avoid spurious failures when the CODEOWNERS file uses
     // a different case than the canonical login returned by the API.
@@ -338,7 +394,7 @@ export async function run(): Promise<void> {
       }
     }
 
-    // 6. Fail with per-file owner details when requirements are not met
+    // 7. Fail with per-file owner details when requirements are not met
     if (failures.length > 0) {
       const lines = failures.map(
         ({ file, requiredOwners }) =>
