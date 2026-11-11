@@ -1135,10 +1135,25 @@ describe('main.ts', () => {
   describe('require-owner-on-revert', () => {
     const REVERT_BODY = 'Reverts myorg/myrepo#7'
 
+    function webFlowCommit(
+      sha: string,
+      overrides: { login?: string | null; verified?: boolean } = {}
+    ) {
+      return {
+        sha,
+        committer:
+          overrides.login === null
+            ? null
+            : { login: overrides.login ?? 'web-flow' },
+        commit: { verification: { verified: overrides.verified ?? true } }
+      }
+    }
+
     function revertOctokit(options: {
       merged?: boolean
       revertFiles?: { filename: string }[]
       originalFiles?: { filename: string; previous_filename?: string }[]
+      commits?: unknown[]
       createCommitStatus?: jest.Mock
     }) {
       const getPull = jest
@@ -1158,6 +1173,9 @@ describe('main.ts', () => {
         }),
         listFiles,
         getPull,
+        listCommits: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: options.commits ?? [webFlowCommit('abc')]
+        }),
         getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
           data: '*.ts @frontend-dev\n'
         }),
@@ -1279,6 +1297,58 @@ describe('main.ts', () => {
       await run()
 
       expect(getPull).not.toHaveBeenCalled()
+      expect(core.setFailed).toHaveBeenCalled()
+    })
+
+    it('requires owner approval when a commit was not committed by GitHub', async () => {
+      const { octokit } = revertOctokit({
+        commits: [webFlowCommit('a'), webFlowCommit('b', { login: 'alice' })]
+      })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('created and signed by GitHub')
+      )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/app.ts')
+      )
+    })
+
+    it('requires owner approval when a commit signature is not verified', async () => {
+      const { octokit } = revertOctokit({
+        commits: [webFlowCommit('a', { verified: false })]
+      })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/app.ts')
+      )
+    })
+
+    it('requires owner approval when a commit has no associated committer account', async () => {
+      const { octokit } = revertOctokit({
+        commits: [webFlowCommit('a', { login: null })]
+      })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('committer: unknown')
+      )
+      expect(core.setFailed).toHaveBeenCalled()
+    })
+
+    it('requires owner approval when the PR has no commits', async () => {
+      const { octokit } = revertOctokit({ commits: [] })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
       expect(core.setFailed).toHaveBeenCalled()
     })
   })

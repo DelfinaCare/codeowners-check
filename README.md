@@ -30,7 +30,10 @@ requests while counting the PR author as an eligible owner.
 - `require-owner-on-revert`: (default `'false'`) When false, revert PRs created
   with GitHub's "Revert" button (whose body starts with `Reverts owner/repo#N`)
   pass without requiring CODEOWNERS approval, provided the reverted PR was
-  merged and the revert only changes files that the reverted PR changed. Set to
+  merged, the revert only changes files that the reverted PR changed, and every
+  commit in the revert PR was created through the GitHub web UI (committed by
+  `web-flow` with a signature verified by GitHub). Commits pushed from a local
+  clone, even if signed with the author's own GPG key, do not qualify. Set to
   `true` to require owner approval on reverts as well.
 - `status-check-name`: When set, the action posts a commit status with this name
   to the PR head SHA on every real outcome (success or failure), except when
