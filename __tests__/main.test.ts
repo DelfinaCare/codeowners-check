@@ -1154,11 +1154,43 @@ describe('main.ts', () => {
       revertFiles?: { filename: string }[]
       originalFiles?: { filename: string; previous_filename?: string }[]
       commits?: unknown[]
+      headBlobs?: Record<string, string>
+      preMergeBlobs?: Record<string, string>
+      mergeCommitSha?: string | null
+      mergeParents?: { sha: string }[]
+      getCommit?: jest.Mock
       createCommitStatus?: jest.Mock
     }) {
-      const getPull = jest
-        .fn<() => Promise<unknown>>()
-        .mockResolvedValue({ data: { merged: options.merged ?? true } })
+      const getPull = jest.fn<() => Promise<unknown>>().mockResolvedValue({
+        data: {
+          merged: options.merged ?? true,
+          merge_commit_sha:
+            options.mergeCommitSha === undefined
+              ? 'merge7'
+              : options.mergeCommitSha
+        }
+      })
+      const blobsByRef: Record<string, Record<string, string>> = {
+        deadbeef: options.headBlobs ?? { 'src/app.ts': 'blob-original' },
+        premerge: options.preMergeBlobs ?? { 'src/app.ts': 'blob-original' }
+      }
+      const getContent = jest
+        .fn<(params: { path: string; ref: string }) => Promise<unknown>>()
+        .mockImplementation(async ({ path, ref }) => {
+          if (path === '.github/CODEOWNERS') {
+            return { data: '*.ts @frontend-dev\n' }
+          }
+          const sha = blobsByRef[ref]?.[path]
+          if (!sha) {
+            throw Object.assign(new Error('Not Found'), { status: 404 })
+          }
+          return { data: { type: 'file', sha } }
+        })
+      const getCommit =
+        options.getCommit ??
+        jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: { parents: options.mergeParents ?? [{ sha: 'premerge' }] }
+        })
       const listFiles = jest
         .fn<(params: { pull_number: number }) => Promise<unknown>>()
         .mockImplementation(async ({ pull_number }) => ({
@@ -1176,12 +1208,11 @@ describe('main.ts', () => {
         listCommits: jest.fn<() => Promise<unknown>>().mockResolvedValue({
           data: options.commits ?? [webFlowCommit('abc')]
         }),
-        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
-          data: '*.ts @frontend-dev\n'
-        }),
+        getContent,
+        getCommit,
         createCommitStatus: options.createCommitStatus
       })
-      return { octokit, getPull }
+      return { octokit, getPull, getCommit }
     }
 
     beforeEach(() => {
@@ -1233,7 +1264,9 @@ describe('main.ts', () => {
         revertFiles: [{ filename: 'src/old.ts' }, { filename: 'src/new.ts' }],
         originalFiles: [
           { filename: 'src/new.ts', previous_filename: 'src/old.ts' }
-        ]
+        ],
+        headBlobs: { 'src/old.ts': 'blob-old' },
+        preMergeBlobs: { 'src/old.ts': 'blob-old' }
       })
       gh.getOctokit.mockReturnValue(octokit)
 
@@ -1349,6 +1382,112 @@ describe('main.ts', () => {
 
       await run()
 
+      expect(core.setFailed).toHaveBeenCalled()
+    })
+
+    it('compares file contents against the parent of the merge commit', async () => {
+      const { octokit, getCommit } = revertOctokit({})
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(getCommit).toHaveBeenCalledWith(
+        expect.objectContaining({ ref: 'merge7' })
+      )
+      expect(core.setFailed).not.toHaveBeenCalled()
+    })
+
+    it('requires owner approval when a file differs from its pre-merge state', async () => {
+      const { octokit } = revertOctokit({
+        headBlobs: { 'src/app.ts': 'blob-tampered' }
+      })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('does not restore the files')
+      )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/app.ts')
+      )
+    })
+
+    it('requires owner approval when the revert keeps a file the reverted PR added', async () => {
+      const { octokit } = revertOctokit({ preMergeBlobs: {} })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/app.ts')
+      )
+    })
+
+    it('passes when the revert deletes a file the reverted PR added', async () => {
+      const { octokit } = revertOctokit({ headBlobs: {}, preMergeBlobs: {} })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+    })
+
+    it('requires owner approval when the reverted PR has no merge commit SHA', async () => {
+      const { octokit, getCommit } = revertOctokit({ mergeCommitSha: null })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(getCommit).not.toHaveBeenCalled()
+      expect(core.setFailed).toHaveBeenCalled()
+    })
+
+    it('requires owner approval when the merge commit has no parent', async () => {
+      const { octokit } = revertOctokit({ mergeParents: [] })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('has no parent')
+      )
+      expect(core.setFailed).toHaveBeenCalled()
+    })
+
+    it('requires owner approval when file contents cannot be fetched', async () => {
+      const { octokit } = revertOctokit({
+        getCommit: jest
+          .fn<() => Promise<unknown>>()
+          .mockRejectedValue(new Error('boom'))
+      })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('Could not compare file contents')
+      )
+      expect(core.setFailed).toHaveBeenCalled()
+    })
+
+    it('requires owner approval when a changed path is a directory', async () => {
+      const { octokit } = revertOctokit({})
+      const getContent = octokit.rest.repos.getContent as unknown as jest.Mock<
+        (params: { path: string }) => Promise<unknown>
+      >
+      getContent.mockImplementation(async ({ path }) =>
+        path === '.github/CODEOWNERS'
+          ? { data: '*.ts @frontend-dev\n' }
+          : { data: [] }
+      )
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('is not a file')
+      )
       expect(core.setFailed).toHaveBeenCalled()
     })
   })

@@ -52,10 +52,11 @@ inputs:
       When false, revert PRs created with GitHub's "Revert" button (whose body
       starts with "Reverts owner/repo#N") pass without requiring CODEOWNERS
       approval, provided the reverted PR was merged, the revert only changes
-      files that the reverted PR changed, and every commit in the revert PR was
+      files that the reverted PR changed, every commit in the revert PR was
       created through the GitHub web UI (committed by "web-flow" with a
-      signature verified by GitHub). Set to true to require owner approval on
-      reverts as well.
+      signature verified by GitHub), and every changed file is restored exactly
+      to its contents before the reverted PR was merged. Set to true to require
+      owner approval on reverts as well.
     required: false
     default: 'false'
   status-check-name:
