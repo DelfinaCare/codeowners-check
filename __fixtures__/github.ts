@@ -27,6 +27,7 @@ export const context: typeof gh.context = {
 export function buildMockOctokit(overrides?: {
   listReviews?: jest.Mock
   listFiles?: jest.Mock
+  getPull?: jest.Mock
   getContent?: jest.Mock
   listMembersInOrg?: jest.Mock
   createCommitStatus?: jest.Mock
@@ -38,7 +39,10 @@ export function buildMockOctokit(overrides?: {
         jest.fn<() => Promise<unknown>>().mockResolvedValue({ data: [] }),
       listFiles:
         overrides?.listFiles ??
-        jest.fn<() => Promise<unknown>>().mockResolvedValue({ data: [] })
+        jest.fn<() => Promise<unknown>>().mockResolvedValue({ data: [] }),
+      get:
+        overrides?.getPull ??
+        jest.fn<() => Promise<unknown>>().mockResolvedValue({ data: {} })
     },
     repos: {
       getContent:

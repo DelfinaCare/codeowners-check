@@ -1131,4 +1131,155 @@ describe('main.ts', () => {
       )
     })
   })
+
+  describe('require-owner-on-revert', () => {
+    const REVERT_BODY = 'Reverts myorg/myrepo#7'
+
+    function revertOctokit(options: {
+      merged?: boolean
+      revertFiles?: { filename: string }[]
+      originalFiles?: { filename: string; previous_filename?: string }[]
+      createCommitStatus?: jest.Mock
+    }) {
+      const getPull = jest
+        .fn<() => Promise<unknown>>()
+        .mockResolvedValue({ data: { merged: options.merged ?? true } })
+      const listFiles = jest
+        .fn<(params: { pull_number: number }) => Promise<unknown>>()
+        .mockImplementation(async ({ pull_number }) => ({
+          data:
+            pull_number === 7
+              ? (options.originalFiles ?? [{ filename: 'src/app.ts' }])
+              : (options.revertFiles ?? [{ filename: 'src/app.ts' }])
+        }))
+      const octokit = gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+        }),
+        listFiles,
+        getPull,
+        getContent: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: '*.ts @frontend-dev\n'
+        }),
+        createCommitStatus: options.createCommitStatus
+      })
+      return { octokit, getPull }
+    }
+
+    beforeEach(() => {
+      gh.context.payload = {
+        pull_request: {
+          number: 42,
+          user: { login: 'alice' },
+          head: { sha: 'deadbeef' },
+          body: REVERT_BODY
+        }
+      }
+    })
+
+    it('passes a revert PR without owner approval by default', async () => {
+      const createCommitStatus = jest
+        .fn<() => Promise<unknown>>()
+        .mockResolvedValue({})
+      core.getInput.mockImplementation((name: string) => {
+        if (name === 'github-token') return 'fake-token'
+        if (name === 'status-check-name') return 'codeowners-check'
+        return ''
+      })
+      const { octokit, getPull } = revertOctokit({ createCommitStatus })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(getPull).toHaveBeenCalledWith(
+        expect.objectContaining({ pull_number: 7 })
+      )
+      expect(core.setFailed).not.toHaveBeenCalled()
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('require-owner-on-revert is false')
+      )
+      expect(core.setOutput).toHaveBeenCalledWith(
+        'files-missing-approver',
+        JSON.stringify([])
+      )
+      expect(createCommitStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'success',
+          description: 'CODEOWNERS check passed (revert PR)'
+        })
+      )
+    })
+
+    it('accepts files renamed by the reverted PR', async () => {
+      const { octokit } = revertOctokit({
+        revertFiles: [{ filename: 'src/old.ts' }, { filename: 'src/new.ts' }],
+        originalFiles: [
+          { filename: 'src/new.ts', previous_filename: 'src/old.ts' }
+        ]
+      })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.setFailed).not.toHaveBeenCalled()
+    })
+
+    it('requires owner approval on revert PRs when require-owner-on-revert is true', async () => {
+      core.getBooleanInput.mockImplementation(
+        (name: string) =>
+          name === 'always-succeed-before-approval' ||
+          name === 'require-owner-on-revert'
+      )
+      const { octokit, getPull } = revertOctokit({})
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(getPull).not.toHaveBeenCalled()
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/app.ts')
+      )
+    })
+
+    it('requires owner approval when the reverted PR was not merged', async () => {
+      const { octokit } = revertOctokit({ merged: false })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('not merged')
+      )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/app.ts')
+      )
+    })
+
+    it('requires owner approval when the revert changes files outside the reverted PR', async () => {
+      const { octokit } = revertOctokit({
+        revertFiles: [{ filename: 'src/app.ts' }, { filename: 'src/other.ts' }]
+      })
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringContaining('changes files outside that PR')
+      )
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('src/other.ts')
+      )
+    })
+
+    it('does not treat a reference to another repository as a revert', async () => {
+      gh.context.payload.pull_request!.body = 'Reverts otherorg/myrepo#7'
+      const { octokit, getPull } = revertOctokit({})
+      gh.getOctokit.mockReturnValue(octokit)
+
+      await run()
+
+      expect(getPull).not.toHaveBeenCalled()
+      expect(core.setFailed).toHaveBeenCalled()
+    })
+  })
 })

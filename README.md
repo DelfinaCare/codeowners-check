@@ -27,6 +27,11 @@ requests while counting the PR author as an eligible owner.
   check would otherwise have failed. This avoids spurious CI failures while a PR
   is still awaiting its first review. Most workflows already enforce at least
   one approval via branch protection, making this safe to leave enabled.
+- `require-owner-on-revert`: (default `'false'`) When false, revert PRs created
+  with GitHub's "Revert" button (whose body starts with `Reverts owner/repo#N`)
+  pass without requiring CODEOWNERS approval, provided the reverted PR was
+  merged and the revert only changes files that the reverted PR changed. Set to
+  `true` to require owner approval on reverts as well.
 - `status-check-name`: When set, the action posts a commit status with this name
   to the PR head SHA on every real outcome (success or failure), except when
   exiting early because there are no approvals yet and
