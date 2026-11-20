@@ -625,12 +625,11 @@ describe('main.ts', () => {
   describe('status-check-name', () => {
     const STATUS_CHECK_NAME = 'codeowners-check'
 
-    let createCommitStatus: jest.Mock<() => Promise<unknown>>
+    type CreateCommitStatus = (params: unknown) => Promise<unknown>
+    let createCommitStatus: jest.Mock<CreateCommitStatus>
 
     beforeEach(() => {
-      createCommitStatus = jest
-        .fn<() => Promise<unknown>>()
-        .mockResolvedValue({})
+      createCommitStatus = jest.fn<CreateCommitStatus>().mockResolvedValue({})
     })
 
     function withStatusCheck(
