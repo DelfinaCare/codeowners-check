@@ -30,7 +30,7 @@
     "format:check": "npx prettier --check .",
     "lint": "npx oxlint",
     "local-action": "npx @github/local-action . src/main.ts .env",
-    "package": "npx rimraf ./dist ./build && npx tsc -p tsconfig.json --outDir build --sourceMap --inlineSources && npx rollup --config rollup.config.mjs",
+    "package": "npx rimraf ./dist ./build && npx rollup --config rollup.config.mjs",
     "package:watch": "npm run package -- --watch",
     "test": "NODE_OPTIONS=--experimental-vm-modules NODE_NO_WARNINGS=1 npx jest",
     "typecheck": "npx tsc --noEmit -p tsconfig.test.json",
