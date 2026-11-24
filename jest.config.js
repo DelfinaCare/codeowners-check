@@ -1,6 +1,6 @@
 // See: https://jestjs.io/docs/configuration
 
-/** @type {import('ts-jest').JestConfigWithTsJest} **/
+/** @type {import('jest').Config} **/
 export default {
   clearMocks: true,
   collectCoverage: true,
@@ -21,18 +21,27 @@ export default {
   // },
   extensionsToTreatAsEsm: ['.ts'],
   moduleFileExtensions: ['ts', 'js'],
-  preset: 'ts-jest',
+  // Sources import siblings with a `.js` extension (NodeNext resolution);
+  // map those to the `.ts` files Jest actually loads.
+  moduleNameMapper: {
+    '^(\\.{1,2}/.*)\\.js$': '$1'
+  },
   reporters: ['default'],
-  resolver: 'ts-jest-resolver',
   testEnvironment: 'node',
   testMatch: ['**/*.test.ts'],
   testPathIgnorePatterns: ['/dist/', '/node_modules/'],
+  // Type checking is done separately by `npm run typecheck` (TypeScript 7);
+  // Jest only needs the types stripped.
   transform: {
     '^.+\\.ts$': [
-      'ts-jest',
+      '@swc/jest',
       {
-        tsconfig: 'tsconfig.test.json',
-        useESM: true
+        jsc: {
+          parser: { syntax: 'typescript' },
+          target: 'es2024'
+        },
+        module: { type: 'es6' },
+        sourceMaps: 'inline'
       }
     ]
   },
