@@ -55,7 +55,8 @@ describe('main.ts', () => {
       pull_request: {
         number: 42,
         user: { login: 'alice' },
-        head: { sha: 'deadbeef' }
+        head: { sha: 'deadbeef' },
+        base: { ref: 'main' }
       }
     }
     // @ts-expect-error - mocking in a test
@@ -564,6 +565,41 @@ describe('main.ts', () => {
     expect(core.setFailed).not.toHaveBeenCalled()
     expect(core.info).toHaveBeenCalledWith(
       expect.stringContaining('CODEOWNERS check passed')
+    )
+  })
+
+  it('fetches CODEOWNERS from the base branch, not the PR head', async () => {
+    // A PR that rewrites CODEOWNERS to grant its author ownership must not be
+    // evaluated against its own proposed rules.
+    const getContent = jest
+      .fn<(params: { ref: string }) => Promise<unknown>>()
+      .mockImplementation(async ({ ref }) => ({
+        data: ref === 'main' ? '* @org-owner\n' : '* @alice\n'
+      }))
+
+    gh.getOctokit.mockReturnValue(
+      gh.buildMockOctokit({
+        listReviews: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ user: { login: 'bob' }, state: 'APPROVED' }]
+        }),
+        listFiles: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+          data: [{ filename: '.github/CODEOWNERS' }, { filename: 'src/a.ts' }]
+        }),
+        getContent: getContent as unknown as jest.Mock
+      })
+    )
+
+    await run()
+
+    expect(getContent).toHaveBeenCalledTimes(1)
+    expect(getContent).toHaveBeenCalledWith(
+      expect.objectContaining({ ref: 'main', path: '.github/CODEOWNERS' })
+    )
+    expect(getContent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ ref: 'deadbeef' })
+    )
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('CODEOWNERS check failed')
     )
   })
 

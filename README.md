@@ -15,7 +15,8 @@ requests while counting the PR author as an eligible owner.
   details, reviews, and file contents. Defaults to the token provided by the
   Actions runner.
 - `codeowners-path`: (default `.github/CODEOWNERS`) Path to the CODEOWNERS file
-  in the repository. The file is fetched from the PR head SHA.
+  in the repository. The file is fetched from the PR's base branch, so a PR
+  cannot change the ownership rules it is evaluated against.
 - `codeowners-contents`: Raw CODEOWNERS file contents to use instead of fetching
   the file from the repository. When provided, `codeowners-path` is ignored.
 - `ignore-filepaths`: Comma- or newline-separated list of file paths or glob

@@ -17,7 +17,8 @@ inputs:
   codeowners-path:
     description: >-
       Path to the CODEOWNERS file in the repository. The file is fetched from
-      the PR head SHA.
+      the PR's base branch (matching GitHub's native CODEOWNERS behavior), so a
+      PR cannot change the ownership rules it is evaluated against.
     required: false
     default: .github/CODEOWNERS
   codeowners-contents:

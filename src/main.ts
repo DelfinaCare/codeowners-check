@@ -97,6 +97,11 @@ export async function run(): Promise<void> {
     const repo = context.repo.repo
     const prAuthor: string = context.payload.pull_request.user.login
     const headSha: string = context.payload.pull_request.head.sha
+    // The CODEOWNERS policy is read from the base branch, never from the PR
+    // head. Reading it from the head would let a PR rewrite the very rules it
+    // is evaluated against (e.g. claim ownership of every file). This matches
+    // GitHub's native CODEOWNERS behaviour, which uses the base branch's file.
+    const baseRef: string = context.payload.pull_request.base.ref
 
     // Populate the status context variables as soon as we have them so the
     // catch clause can use them if an error is thrown later.
@@ -104,7 +109,9 @@ export async function run(): Promise<void> {
     statusRepo = repo
     statusHeadSha = headSha
 
-    core.info(`PR #${prNumber} — author: ${prAuthor}, head SHA: ${headSha}`)
+    core.info(
+      `PR #${prNumber} — author: ${prAuthor}, head SHA: ${headSha}, base ref: ${baseRef}`
+    )
 
     // 1. Read current PR approvals — exit success if none exist
     // Build map of the latest meaningful review state per user, considering only
@@ -198,12 +205,12 @@ export async function run(): Promise<void> {
       return
     }
 
-    // 4. Read CODEOWNERS — use provided contents or fetch from the PR head SHA
+    // 4. Read CODEOWNERS — use provided contents or fetch from the PR base branch
     let codeownersContent: string
     if (codeownersContents) {
       codeownersContent = codeownersContents
       core.info(
-        'Using provided CODEOWNERS contents instead of fetching from head.'
+        'Using provided CODEOWNERS contents instead of fetching from the base branch.'
       )
     } else {
       try {
@@ -211,7 +218,7 @@ export async function run(): Promise<void> {
           owner,
           repo,
           path: codeownersPath,
-          ref: headSha,
+          ref: baseRef,
           headers: {
             accept: 'application/vnd.github.raw'
           }
@@ -236,7 +243,7 @@ export async function run(): Promise<void> {
         }
         codeownersContent = codeownersRaw
       } catch (error: unknown) {
-        const message = `Failed to fetch CODEOWNERS file at "${codeownersPath}" with error: ${errorToString(error)}`
+        const message = `Failed to fetch CODEOWNERS file at "${codeownersPath}" on base branch "${baseRef}" with error: ${errorToString(error)}`
         core.setFailed(message)
         await setCommitStatus(
           octokit,

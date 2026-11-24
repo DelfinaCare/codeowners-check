@@ -37276,12 +37276,17 @@ async function run() {
         const repo = context.repo.repo;
         const prAuthor = context.payload.pull_request.user.login;
         const headSha = context.payload.pull_request.head.sha;
+        // The CODEOWNERS policy is read from the base branch, never from the PR
+        // head. Reading it from the head would let a PR rewrite the very rules it
+        // is evaluated against (e.g. claim ownership of every file). This matches
+        // GitHub's native CODEOWNERS behaviour, which uses the base branch's file.
+        const baseRef = context.payload.pull_request.base.ref;
         // Populate the status context variables as soon as we have them so the
         // catch clause can use them if an error is thrown later.
         statusOwner = owner;
         statusRepo = repo;
         statusHeadSha = headSha;
-        info(`PR #${prNumber} — author: ${prAuthor}, head SHA: ${headSha}`);
+        info(`PR #${prNumber} — author: ${prAuthor}, head SHA: ${headSha}, base ref: ${baseRef}`);
         // 1. Read current PR approvals — exit success if none exist
         // Build map of the latest meaningful review state per user, considering only
         // APPROVED and CHANGES_REQUESTED. States like COMMENTED or DISMISSED are
@@ -37335,11 +37340,11 @@ async function run() {
             await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'success', 'CODEOWNERS check passed (all files ignored)');
             return;
         }
-        // 4. Read CODEOWNERS — use provided contents or fetch from the PR head SHA
+        // 4. Read CODEOWNERS — use provided contents or fetch from the PR base branch
         let codeownersContent;
         if (codeownersContents) {
             codeownersContent = codeownersContents;
-            info('Using provided CODEOWNERS contents instead of fetching from head.');
+            info('Using provided CODEOWNERS contents instead of fetching from the base branch.');
         }
         else {
             try {
@@ -37347,7 +37352,7 @@ async function run() {
                     owner,
                     repo,
                     path: codeownersPath,
-                    ref: headSha,
+                    ref: baseRef,
                     headers: {
                         accept: 'application/vnd.github.raw'
                     }
@@ -37365,7 +37370,7 @@ async function run() {
                 codeownersContent = codeownersRaw;
             }
             catch (error) {
-                const message = `Failed to fetch CODEOWNERS file at "${codeownersPath}" with error: ${errorToString(error)}`;
+                const message = `Failed to fetch CODEOWNERS file at "${codeownersPath}" on base branch "${baseRef}" with error: ${errorToString(error)}`;
                 setFailed(message);
                 await setCommitStatus(octokit, owner, repo, headSha, statusCheckName, 'failure', 'Failed to fetch CODEOWNERS file');
                 return;
