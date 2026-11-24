@@ -26,16 +26,16 @@ it is generated from.
 | `.licensed.yml`      | Licensed Configuration                                   |
 | `.markdown-lint.yml` | Markdown Linter Configuration                            |
 | `.node-version`      | Node.js Version Configuration                            |
+| `.oxlintrc.json`     | oxlint Linter Configuration                              |
 | `.prettierrc.yml`    | Prettier Formatter Configuration                         |
 | `.yaml-lint.yml`     | YAML Linter Configuration                                |
 | `action.yml`         | GitHub Action Metadata                                   |
 | `CODEOWNERS`         | Code Owners File                                         |
-| `eslint.config.mjs`  | ESLint Configuration                                     |
 | `jest.config.js`     | Jest Configuration                                       |
 | `LICENSE`            | License File                                             |
 | `package.json`       | NPM Package Configuration                                |
 | `README.md`          | Project Documentation                                    |
-| `rollup.config.ts`   | Rollup Bundler Configuration                             |
+| `rollup.config.mjs`  | Rollup Bundler Configuration                             |
 | `tsconfig.json`      | TypeScript Configuration                                 |
 
 ## Environment Setup
