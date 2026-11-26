@@ -55,7 +55,7 @@
     "make-coverage-badge": "^1.2.0",
     "oxlint": "^1.95.0",
     "prettier": "^3.10.1",
-    "rollup": "^4.68.4",
+    "rollup": "^4.68.8",
     "rollup-plugin-sourcemaps2": "^0.5.10",
     "typescript": "^7.0.2"
   },
